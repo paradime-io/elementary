@@ -292,6 +292,34 @@ def get_cli_properties() -> dict:
     help="A Microsoft Teams webhook URL for sending alerts to a specific channel in Teams.",
 )
 @click.option(
+    "--datadog-api-key",
+    "-dak",
+    type=str,
+    default=None,
+    help="Datadog API key for creating incidents.",
+)
+@click.option(
+    "--datadog-application-key",
+    "-dapp",
+    type=str,
+    default=None,
+    help="Datadog application key for creating incidents.",
+)
+@click.option(
+    "--datadog-site",
+    "-ds",
+    type=click.Choice(["datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com", "datadoghq.eu", "ap1.datadoghq.com", "ddog-gov.com"]),
+    default=None,
+    help="Datadog site (e.g., datadoghq.com for US1, datadoghq.eu for EU1).",
+)
+@click.option(
+    "--datadog-default-severity",
+    "-dsev",
+    type=click.Choice(["SEV-1", "SEV-2", "SEV-3", "SEV-4", "SEV-5"]),
+    default=None,
+    help="Default severity for Datadog incidents.",
+)
+@click.option(
     "--maximum-columns-in-alert-samples",
     "-mc",
     type=int,
@@ -329,6 +357,10 @@ def monitor(
     filters,
     excludes,
     teams_webhook,
+    datadog_api_key,
+    datadog_application_key,
+    datadog_site,
+    datadog_default_severity,
     maximum_columns_in_alert_samples,
     quiet_logs,
 ):
@@ -363,6 +395,10 @@ def monitor(
         slack_group_alerts_by=group_by,
         report_url=report_url,
         teams_webhook=teams_webhook,
+        datadog_api_key=datadog_api_key,
+        datadog_application_key=datadog_application_key,
+        datadog_site=datadog_site,
+        datadog_default_severity=datadog_default_severity,
         maximum_columns_in_alert_samples=maximum_columns_in_alert_samples,
         quiet_logs=quiet_logs,
     )

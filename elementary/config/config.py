@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 import google.auth  # type: ignore[import]
 from dateutil import tz
@@ -19,6 +19,7 @@ class Config:
     _GOOGLE = "google"
     _AZURE = "azure"
     _TEAMS = "teams"
+    _DATADOG = "datadog"
     _CONFIG_FILE_NAME = "config.yml"
 
     # Quoting env vars
@@ -71,6 +72,14 @@ class Config:
         azure_container_name: Optional[str] = None,
         report_url: Optional[str] = None,
         teams_webhook: Optional[str] = None,
+        datadog_api_key: Optional[str] = None,
+        datadog_application_key: Optional[str] = None,
+        datadog_site: Optional[str] = None,
+        datadog_default_severity: Optional[str] = None,
+        datadog_severity_mapping: Optional[Dict[str, str]] = None,
+        datadog_customer_impacted: Optional[bool] = None,
+        datadog_commander_user_id: Optional[str] = None,
+        datadog_notification_handles: Optional[List[str]] = None,
         maximum_columns_in_alert_samples: Optional[int] = None,
         env: str = DEFAULT_ENV,
         run_dbt_deps_if_needed: Optional[bool] = None,
@@ -149,6 +158,40 @@ class Config:
         self.teams_webhook = self._first_not_none(
             teams_webhook,
             teams_config.get("teams_webhook"),
+        )
+
+        datadog_config = config.get(self._DATADOG, {})
+        self.datadog_api_key = self._first_not_none(
+            datadog_api_key,
+            datadog_config.get("api_key"),
+        )
+        self.datadog_application_key = self._first_not_none(
+            datadog_application_key,
+            datadog_config.get("application_key"),
+        )
+        self.datadog_site = self._first_not_none(
+            datadog_site,
+            datadog_config.get("site"),
+        )
+        self.datadog_default_severity = self._first_not_none(
+            datadog_default_severity,
+            datadog_config.get("default_severity"),
+        )
+        self.datadog_severity_mapping = self._first_not_none(
+            datadog_severity_mapping,
+            datadog_config.get("severity_mapping"),
+        )
+        self.datadog_customer_impacted = self._first_not_none(
+            datadog_customer_impacted,
+            datadog_config.get("customer_impacted"),
+        )
+        self.datadog_commander_user_id = self._first_not_none(
+            datadog_commander_user_id,
+            datadog_config.get("commander_user_id"),
+        )
+        self.datadog_notification_handles = self._first_not_none(
+            datadog_notification_handles,
+            datadog_config.get("notification_handles"),
         )
 
         aws_config = config.get(self._AWS, {})
@@ -249,6 +292,10 @@ class Config:
         return self.teams_webhook
 
     @property
+    def has_datadog(self) -> bool:
+        return self.datadog_api_key and self.datadog_application_key
+
+    @property
     def has_s3(self):
         return self.s3_bucket_name
 
@@ -278,17 +325,17 @@ class Config:
         provided_integrations = list(
             filter(
                 lambda provided_integration: provided_integration,
-                [self.has_slack, self.has_teams],
+                [self.has_slack, self.has_teams, self.has_datadog],
             )
         )
         self._validate_timezone()
         if not provided_integrations:
             raise InvalidArgumentsError(
-                "Either a Slack token and a channel, a Slack webhook or a Microsoft Teams webhook is required."
+                "Either a Slack token and a channel, a Slack webhook, a Microsoft Teams webhook, or Datadog API credentials is required."
             )
         if len(provided_integrations) > 1:
             raise InvalidArgumentsError(
-                "You provided both a Slack and Teams integration. Please provide only one so we know where to send the alerts."
+                "You provided multiple integrations (Slack, Teams, and/or Datadog). Please provide only one so we know where to send the alerts."
             )
 
     def validate_send_report(self):
