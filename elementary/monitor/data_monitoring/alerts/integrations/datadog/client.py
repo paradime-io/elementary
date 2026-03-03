@@ -17,6 +17,12 @@ from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import
     DatadogNotificationHandle,
     DatadogSite,
 )
+from elementary.monitor.fetchers.alerts.schema.alert_data import (
+    DATADOG_COMMANDER_UUID_KEY,
+    DATADOG_INCIDENT_TYPE_UUID_KEY,
+    DATADOG_NOTIFICATION_HANDLE_KEY,
+    DATADOG_SEVERITY_KEY,
+)
 from elementary.utils.log import get_logger
 
 logger = get_logger(__name__)
@@ -91,23 +97,40 @@ def build_incident_payload(
     # Determine severity based on alert status and tags
     alert_tags = getattr(alert, 'tags', None) or []
     severity = config.get_severity_for_status(
-        getattr(alert, 'status', 'unknown'), 
+        getattr(alert, 'status', 'unknown'),
         alert_tags
     )
-    
+
+    # Per-alert overrides from dbt meta.alerts_config
+    alert_meta = getattr(alert, 'unified_meta', None) or {}
+
+    # Severity override
+    alert_severity_override = alert_meta.get(DATADOG_SEVERITY_KEY)
+    if alert_severity_override:
+        severity = alert_severity_override
+
     # Build notification handles
     notification_handles = None
     if config.notification_handles:
         notification_handles = [
-            DatadogNotificationHandle(handle=handle) 
+            DatadogNotificationHandle(handle=handle)
             for handle in config.notification_handles
         ]
 
-    # Build commander relationship
+    # Per-alert notification handle (e.g. @team-first-response or @user@email.com)
+    alert_notification_handle = alert_meta.get(DATADOG_NOTIFICATION_HANDLE_KEY)
+    if alert_notification_handle:
+        handle = alert_notification_handle if alert_notification_handle.startswith("@") else f"@{alert_notification_handle}"
+        if notification_handles is None:
+            notification_handles = []
+        notification_handles.append(DatadogNotificationHandle(handle=handle))
+
+    # Build commander relationship (per-alert override takes precedence over config)
+    commander_user_id = alert_meta.get(DATADOG_COMMANDER_UUID_KEY) or config.commander_user_id
     relationships = None
-    if config.commander_user_id:
+    if commander_user_id:
         relationships = DatadogIncidentRelationships(
-            commander_user={"data": {"type": "users", "id": config.commander_user_id}}
+            commander_user={"data": {"type": "users", "id": commander_user_id}}
         )
 
     # Truncate customer_impact_scope to 1024 characters (Datadog API limit)
@@ -120,6 +143,9 @@ def build_incident_payload(
         "summary": {"type": "textbox", "value": description[:2048]},  # Datadog limit
     }
 
+    # Per-alert incident type UUID
+    alert_incident_type_uuid = alert_meta.get(DATADOG_INCIDENT_TYPE_UUID_KEY)
+
     attributes = DatadogIncidentFieldAttributes(
         title=title,
         customer_impact_scope=customer_impact_scope,
@@ -127,6 +153,7 @@ def build_incident_payload(
         notification_handles=notification_handles,
         fields=fields,
         creation_idempotency_key=idempotency_key,
+        incident_type_uuid=alert_incident_type_uuid,
     )
 
     return CreateIncidentInput(

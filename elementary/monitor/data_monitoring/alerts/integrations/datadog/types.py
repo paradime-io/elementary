@@ -56,6 +56,7 @@ class DatadogIncidentFieldAttributes(BaseModel):
     notification_handles: Optional[List[DatadogNotificationHandle]] = Field(default=None)
     fields: Dict[str, Any]
     creation_idempotency_key: str
+    incident_type_uuid: Optional[str] = Field(default=None)
 
 
 class DatadogIncidentData(BaseModel):

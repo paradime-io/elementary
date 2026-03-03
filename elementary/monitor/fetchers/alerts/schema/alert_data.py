@@ -21,6 +21,10 @@ SUBSCRIBERS_KEY = "subscribers"
 ALERT_FIELDS_KEY = "alert_fields"
 ALERT_SUPPRESSION_INTERVAL_KEY = "alert_suppression_interval"
 GROUP_ALERTS_BY_KEY = "slack_group_alerts_by"
+DATADOG_SEVERITY_KEY = "datadog_severity"
+DATADOG_NOTIFICATION_HANDLE_KEY = "datadog_notification_handle"
+DATADOG_COMMANDER_UUID_KEY = "datadog_commander_uuid"
+DATADOG_INCIDENT_TYPE_UUID_KEY = "datadog_incident_type_uuid"
 
 
 class BaseAlertDataSchema(BaseModel):
@@ -53,6 +57,22 @@ class BaseAlertDataSchema(BaseModel):
     @property
     def alert_suppression_interval(self) -> Optional[int]:
         return self.unified_meta.get(ALERT_SUPPRESSION_INTERVAL_KEY)
+
+    @property
+    def datadog_severity(self) -> Optional[str]:
+        return self.unified_meta.get(DATADOG_SEVERITY_KEY)
+
+    @property
+    def datadog_notification_handle(self) -> Optional[str]:
+        return self.unified_meta.get(DATADOG_NOTIFICATION_HANDLE_KEY)
+
+    @property
+    def datadog_commander_uuid(self) -> Optional[str]:
+        return self.unified_meta.get(DATADOG_COMMANDER_UUID_KEY)
+
+    @property
+    def datadog_incident_type_uuid(self) -> Optional[str]:
+        return self.unified_meta.get(DATADOG_INCIDENT_TYPE_UUID_KEY)
 
     @property
     def group_alerts_by(self) -> Optional[str]:
