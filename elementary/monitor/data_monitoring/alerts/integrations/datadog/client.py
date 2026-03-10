@@ -1,4 +1,4 @@
-import logging
+import hashlib
 from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
@@ -26,6 +26,12 @@ from elementary.monitor.fetchers.alerts.schema.alert_data import (
 from elementary.utils.log import get_logger
 
 logger = get_logger(__name__)
+
+
+def get_alert_token(alert_class_id: str) -> str:
+    """Return a stable, short token derived from alert_class_id, embedded in the incident title."""
+    short_hash = hashlib.md5(alert_class_id.encode()).hexdigest()[:8]
+    return f"edr-{short_hash}"
 
 
 class DatadogApiClient:
@@ -72,6 +78,31 @@ class DatadogApiClient:
             logger.error(f"Request failed when creating Datadog incident: {e}")
             return False, None
 
+    def search_open_incidents(self, token: str) -> Optional[str]:
+        """Return incident ID of an active incident whose title contains token, or None.
+
+        Uses GET /api/v2/incidents/search with query='state:active edr-{hash}' to filter
+        server-side. The dash format avoids query syntax issues and allows searching
+        by the full token. Returns the first matching incident ID.
+        """
+        # token = "edr-06ab46a2" — safe to use directly in DD query syntax (no colon)
+        url = f"{self.base_url}/api/v2/incidents/search"
+        params = {"query": f"state:active {token}", "page[size]": 10}
+        try:
+            response = requests.get(url=url, headers=self.headers, params=params, timeout=60)
+            if not response.ok:
+                logger.warning(
+                    f"Datadog incident search returned {response.status_code} — proceeding with creation."
+                )
+                return None
+            incidents = response.json().get("data", {}).get("attributes", {}).get("incidents", [])
+            for incident in incidents:
+                inner = incident.get("data", {})
+                return inner.get("id")  # state:active + hash already pinpoints the right one
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Datadog incident search failed: {e} — proceeding with creation.")
+        return None
+
 
 def build_incident_payload(
     config: DatadogConfig,
@@ -85,14 +116,17 @@ def build_incident_payload(
 ) -> CreateIncidentInput:
     """Build a Datadog incident payload from an Elementary alert"""
     
-    # Generate title
-    title = _generate_incident_title(alert)
-    
-    # Generate description 
+    # Generate title with embedded deduplication token
+    alert_class_id = getattr(alert, "alert_class_id", alert.id)
+    token = get_alert_token(alert_class_id)
+    title = f"{_generate_incident_title(alert)} [{token}]"
+
+    # Generate description
     description = _generate_incident_description(alert)
-    
-    # Generate idempotency key
-    idempotency_key = f"elementary-{getattr(alert, 'alert_class_id', alert.id)}"
+
+    # Per-run idempotency key: prevents duplicate creation within a single run
+    # but allows re-creation after a previous incident is resolved.
+    idempotency_key = f"elementary-{alert.id}"
     
     # Determine severity based on alert status and tags
     alert_tags = getattr(alert, 'tags', None) or []

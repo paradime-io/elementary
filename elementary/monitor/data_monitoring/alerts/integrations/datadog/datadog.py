@@ -13,6 +13,7 @@ from elementary.monitor.data_monitoring.alerts.integrations.base_integration imp
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.client import (
     DatadogApiClient,
     build_incident_payload,
+    get_alert_token,
 )
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
     DatadogConfig,
@@ -78,13 +79,24 @@ class DatadogIntegration(BaseIntegration):
         *args,
         **kwargs,
     ) -> bool:
-        """Send an alert as a Datadog incident"""
+        """Send an alert as a Datadog incident, skipping if an open incident already exists."""
         logger.debug(f"Creating Datadog incident for alert: {alert.id}")
-        
+
         try:
+            alert_class_id = getattr(alert, "alert_class_id", alert.id)
+            token = get_alert_token(alert_class_id)
+
+            open_incident_id = self.client.search_open_incidents(token)
+            if open_incident_id:
+                logger.info(
+                    f"Datadog: open incident {open_incident_id} already exists for "
+                    f"{alert_class_id} — skipping creation."
+                )
+                return True
+
             payload = build_incident_payload(config=self.datadog_config, alert=alert)
             success, response_data = self.client.create_incident(payload)
-            
+
             if success:
                 incident_id = response_data.get("data", {}).get("id") if response_data else "unknown"
                 logger.info(f"Successfully created Datadog incident {incident_id} for alert {alert.id}")
@@ -92,7 +104,7 @@ class DatadogIntegration(BaseIntegration):
             else:
                 logger.error(f"Failed to create Datadog incident for alert {alert.id}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Error creating Datadog incident for alert {alert.id}: {e}")
             return False
