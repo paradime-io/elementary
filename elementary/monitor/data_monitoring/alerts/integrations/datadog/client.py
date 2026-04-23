@@ -286,7 +286,27 @@ def _generate_incident_description(
             "```",
             ""
         ])
-    
+
+    # Test results query
+    if isinstance(alert, TestAlertModel) and alert.test_results_query:
+        _MAX_QUERY_DISPLAY_LENGTH = 3000
+        if len(alert.test_results_query) <= _MAX_QUERY_DISPLAY_LENGTH:
+            lines.extend([
+                "**Test Query**:",
+                "```sql",
+                alert.test_results_query,
+                "```",
+                ""
+            ])
+        elif alert.elementary_database_and_schema:
+            lines.extend([
+                "**Test Query** _(too long to display — run this to retrieve it)_:",
+                "```sql",
+                f"SELECT test_results_query FROM {alert.elementary_database_and_schema}.elementary_test_results WHERE test_execution_id = '{alert.id}'",
+                "```",
+                ""
+            ])
+
     # Metadata
     metadata_lines = []
     if hasattr(alert, 'owners') and alert.owners:
