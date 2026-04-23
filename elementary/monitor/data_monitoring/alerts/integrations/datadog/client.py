@@ -17,6 +17,7 @@ from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import
     DatadogNotificationHandle,
     DatadogSite,
 )
+from elementary.monitor.alerts.alert_messages.alert_fields import AlertField as _AlertField
 from elementary.monitor.fetchers.alerts.schema.alert_data import (
     DATADOG_COMMANDER_UUID_KEY,
     DATADOG_INCIDENT_TYPE_UUID_KEY,
@@ -288,24 +289,19 @@ def _generate_incident_description(
         ])
 
     # Test results query
-    if isinstance(alert, TestAlertModel) and alert.test_results_query:
-        _MAX_QUERY_DISPLAY_LENGTH = 3000
-        if len(alert.test_results_query) <= _MAX_QUERY_DISPLAY_LENGTH:
-            lines.extend([
-                "**Test Query**:",
-                "```sql",
-                alert.test_results_query,
-                "```",
-                ""
-            ])
-        elif alert.elementary_database_and_schema:
-            lines.extend([
-                "**Test Query** _(too long to display — run this to retrieve it)_:",
-                "```sql",
-                f"SELECT test_results_query FROM {alert.elementary_database_and_schema}.elementary_test_results WHERE test_execution_id = '{alert.id}'",
-                "```",
-                ""
-            ])
+    alert_fields = getattr(alert, "alert_fields", None) or [f.value for f in _AlertField]
+    if (
+        isinstance(alert, TestAlertModel)
+        and alert.test_results_query
+        and _AlertField.TEST_QUERY.value in alert_fields
+    ):
+        lines.extend([
+            "**Test Results Query**:",
+            "```sql",
+            alert.test_results_query.strip(),
+            "```",
+            ""
+        ])
 
     # Metadata
     metadata_lines = []
