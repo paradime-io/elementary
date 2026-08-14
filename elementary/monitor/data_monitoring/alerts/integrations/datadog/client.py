@@ -1,4 +1,5 @@
 import hashlib
+import time
 from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
@@ -20,6 +21,7 @@ from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import
 from elementary.monitor.alerts.alert_messages.alert_fields import AlertField as _AlertField
 from elementary.monitor.fetchers.alerts.schema.alert_data import (
     DATADOG_COMMANDER_UUID_KEY,
+    DATADOG_INCIDENT_TITLE_KEY,
     DATADOG_INCIDENT_TYPE_UUID_KEY,
     DATADOG_NOTIFICATION_HANDLE_KEY,
     DATADOG_SEVERITY_KEY,
@@ -27,6 +29,14 @@ from elementary.monitor.fetchers.alerts.schema.alert_data import (
 from elementary.utils.log import get_logger
 
 logger = get_logger(__name__)
+
+# Datadog API limits
+MAX_INCIDENT_TITLE_LENGTH = 2048
+
+# Retry policy for rate limits (429) and transient server errors (5xx)
+MAX_RETRIES = 5
+BASE_BACKOFF_SECONDS = 2
+MAX_BACKOFF_SECONDS = 60
 
 
 def get_alert_token(alert_class_id: str) -> str:
@@ -45,18 +55,66 @@ class DatadogApiClient:
         }
         self.base_url = f"https://api.{site.value}"
 
+    def _request_with_retries(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Send a request, retrying on 429 (rate limit) and 5xx with backoff.
+
+        Honors Datadog's Retry-After / x-ratelimit-reset headers when present,
+        otherwise falls back to capped exponential backoff. Raises
+        requests.exceptions.RequestException only if all retries fail on a
+        connection-level error; HTTP errors are returned to the caller.
+        """
+        last_connection_error: Optional[requests.exceptions.RequestException] = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = requests.request(
+                    method=method, url=url, headers=self.headers, timeout=60, **kwargs
+                )
+            except requests.exceptions.RequestException as e:
+                last_connection_error = e
+                if attempt == MAX_RETRIES:
+                    raise
+                delay = min(BASE_BACKOFF_SECONDS * (2 ** attempt), MAX_BACKOFF_SECONDS)
+                logger.warning(
+                    f"Datadog request failed ({e}) — retrying in {delay}s "
+                    f"({attempt + 1}/{MAX_RETRIES})."
+                )
+                time.sleep(delay)
+                continue
+
+            if response.status_code != 429 and response.status_code < 500:
+                return response
+            if attempt == MAX_RETRIES:
+                return response
+
+            retry_after = response.headers.get("Retry-After") or response.headers.get(
+                "x-ratelimit-reset"
+            )
+            try:
+                delay = float(retry_after) if retry_after else BASE_BACKOFF_SECONDS * (2 ** attempt)
+            except ValueError:
+                delay = BASE_BACKOFF_SECONDS * (2 ** attempt)
+            delay = min(max(delay, 1), MAX_BACKOFF_SECONDS)
+            reason = "rate limited" if response.status_code == 429 else f"server error {response.status_code}"
+            logger.warning(
+                f"Datadog API {reason} — retrying in {delay:.0f}s ({attempt + 1}/{MAX_RETRIES})."
+            )
+            time.sleep(delay)
+
+        raise last_connection_error or requests.exceptions.RequestException(
+            "Datadog request failed after retries"
+        )
+
     def create_incident(self, payload: CreateIncidentInput) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """Create a Datadog incident and return (success, response_data)"""
         url = f"{self.base_url}/api/v2/incidents"
-        
+
         try:
-            response = requests.post(
-                url=url,
-                headers=self.headers,
+            response = self._request_with_retries(
+                "POST",
+                url,
                 json=payload.dict(exclude_none=True),
-                timeout=60
             )
-            
+
             if response.ok:
                 logger.info(f"Successfully created Datadog incident")
                 return True, response.json()
@@ -90,7 +148,7 @@ class DatadogApiClient:
         url = f"{self.base_url}/api/v2/incidents/search"
         params = {"query": f"state:active {token}", "page[size]": 10}
         try:
-            response = requests.get(url=url, headers=self.headers, params=params, timeout=60)
+            response = self._request_with_retries("GET", url, params=params)
             if not response.ok:
                 logger.warning(
                     f"Datadog incident search returned {response.status_code} — proceeding with creation."
@@ -120,7 +178,17 @@ def build_incident_payload(
     # Generate title with embedded deduplication token
     alert_class_id = getattr(alert, "alert_class_id", alert.id)
     token = get_alert_token(alert_class_id)
-    title = f"{_generate_incident_title(alert)} [{token}]"
+
+    # Per-alert overrides from dbt meta.alerts_config
+    alert_meta = getattr(alert, 'unified_meta', None) or {}
+
+    # Custom title from meta takes precedence over the auto-generated one
+    base_title = alert_meta.get(DATADOG_INCIDENT_TITLE_KEY) or _generate_incident_title(alert)
+    token_suffix = f" [{token}]"
+    max_base_title_length = MAX_INCIDENT_TITLE_LENGTH - len(token_suffix)
+    if len(base_title) > max_base_title_length:
+        base_title = base_title[: max_base_title_length - 1] + "…"
+    title = f"{base_title}{token_suffix}"
 
     # Generate description
     description = _generate_incident_description(alert)
@@ -128,16 +196,13 @@ def build_incident_payload(
     # Per-run idempotency key: prevents duplicate creation within a single run
     # but allows re-creation after a previous incident is resolved.
     idempotency_key = f"elementary-{alert.id}"
-    
+
     # Determine severity based on alert status and tags
     alert_tags = getattr(alert, 'tags', None) or []
     severity = config.get_severity_for_status(
         getattr(alert, 'status', 'unknown'),
         alert_tags
     )
-
-    # Per-alert overrides from dbt meta.alerts_config
-    alert_meta = getattr(alert, 'unified_meta', None) or {}
 
     # Severity override
     alert_severity_override = alert_meta.get(DATADOG_SEVERITY_KEY)

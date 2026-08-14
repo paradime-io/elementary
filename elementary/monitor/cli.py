@@ -326,6 +326,13 @@ def get_cli_properties() -> dict:
     default=4,
     help="Maximum number of columns to display as a table in alert samples. Above this, the output is shown as raw JSON.",
 )
+@click.option(
+    "--ignore-send-failures",
+    is_flag=True,
+    default=False,
+    help="Exit with code 0 even if some alerts fail to send. Failed alerts are still logged, "
+    "remain pending, and are retried on the next run.",
+)
 @click.pass_context
 def monitor(
     ctx,
@@ -362,6 +369,7 @@ def monitor(
     datadog_site,
     datadog_default_severity,
     maximum_columns_in_alert_samples,
+    ignore_send_failures,
     quiet_logs,
 ):
     """
@@ -429,6 +437,7 @@ def monitor(
             selector_filter=alert_filters,
             global_suppression_interval=suppression_interval,
             override_config=override_dbt_project_config,
+            ignore_send_failures=ignore_send_failures,
         )
         # The call to track_cli_start must be after the constructor of DataMonitoringAlerts as it enriches the tracking
         # properties. This is a tech-debt that should be fixed in the future.
