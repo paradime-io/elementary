@@ -75,6 +75,15 @@ def common_options(cmd: str):
                 default=None,
                 help="The Slack token for your workspace.",
             )(func)
+            func = click.option(
+                "--ssl-ca-bundle",
+                type=str,
+                default=None,
+                help="Override the CA bundle used for SSL connections. "
+                "Accepted values: 'certifi' (use the certifi package bundle), "
+                "'system' (use the OS CA store), or a file path to a custom CA bundle. "
+                "When omitted each underlying library uses its own default.",
+            )(func)
         if cmd in (Command.REPORT, Command.SEND_REPORT):
             func = click.option(
                 "--exclude-elementary-models",
@@ -371,6 +380,7 @@ def monitor(
     maximum_columns_in_alert_samples,
     ignore_send_failures,
     quiet_logs,
+    ssl_ca_bundle,
 ):
     """
     Get alerts on failures in dbt jobs.
@@ -409,6 +419,7 @@ def monitor(
         datadog_default_severity=datadog_default_severity,
         maximum_columns_in_alert_samples=maximum_columns_in_alert_samples,
         quiet_logs=quiet_logs,
+        ssl_ca_bundle=ssl_ca_bundle,
     )
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.set_env("use_select", bool(select))
@@ -737,6 +748,7 @@ def send_report(
     include,
     target_path,
     quiet_logs,
+    ssl_ca_bundle,
 ):
     """
     Generate and send the report to an external platform.
@@ -780,6 +792,7 @@ def send_report(
         env=env,
         project_name=project_name,
         quiet_logs=quiet_logs,
+        ssl_ca_bundle=ssl_ca_bundle,
     )
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.set_env("use_select", bool(select))
