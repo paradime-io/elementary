@@ -46,6 +46,7 @@ class TestsAPI(APIClient):
         days_back: int = 7,
         invocations_per_test: int = 720,
         disable_passed_test_metrics: bool = False,
+        skip_test_result_rows: bool = False,
     ):
         super().__init__(dbt_runner)
         self.tests_fetcher = TestsFetcher(dbt_runner=self.dbt_runner)
@@ -53,6 +54,7 @@ class TestsAPI(APIClient):
             days_back=days_back,
             invocations_per_test=invocations_per_test,
             disable_passed_test_metrics=disable_passed_test_metrics,
+            skip_test_result_rows=skip_test_result_rows,
         )
 
     def _get_test_results_db_rows(
@@ -60,11 +62,13 @@ class TestsAPI(APIClient):
         days_back: Optional[int] = 7,
         invocations_per_test: int = 720,
         disable_passed_test_metrics: bool = False,
+        skip_test_result_rows: bool = False,
     ) -> List[TestResultDBRowSchema]:
         return self.tests_fetcher.get_all_test_results_db_rows(
             days_back=days_back,
             invocations_per_test=invocations_per_test,
             disable_passed_test_metrics=disable_passed_test_metrics,
+            skip_test_result_rows=skip_test_result_rows,
         )
 
     def get_test_results_summary(
@@ -168,12 +172,12 @@ class TestsAPI(APIClient):
                 for test_result in filtered_test_results_db_rows
                 if test_result.invocation_id == invocation_id
             ]
-
-        filtered_test_results_db_rows = [
-            test_result
-            for test_result in filtered_test_results_db_rows
-            if test_result.invocations_rank_index == 1
-        ]
+        else:
+            filtered_test_results_db_rows = [
+                test_result
+                for test_result in filtered_test_results_db_rows
+                if test_result.invocations_rank_index == 1
+            ]
 
         tests_results: DefaultDict[str, List[TestResultSchema]] = defaultdict(list)
         for test_result_db_row in filtered_test_results_db_rows:
@@ -281,9 +285,11 @@ class TestsAPI(APIClient):
         for elementary_unique_id, invocations in grouped_invocations.items():
             totals = self._get_test_invocations_totals(invocations)
             test_invocations[elementary_unique_id] = InvocationsSchema(
-                fail_rate=round((totals.errors + totals.failures) / len(invocations), 2)
-                if invocations
-                else 0,
+                fail_rate=(
+                    round((totals.errors + totals.failures) / len(invocations), 2)
+                    if invocations
+                    else 0
+                ),
                 totals=totals,
                 invocations=invocations,
                 description=self._get_invocations_description(totals),
@@ -426,15 +432,17 @@ class TestsAPI(APIClient):
                 test_db_row.package_name, test_db_row.original_path
             ),
             created_at=test_db_row.created_at if test_db_row.created_at else None,
-            latest_run_time=latest_run_datetime.isoformat()
-            if latest_run_datetime
-            else None,
-            latest_run_time_utc=latest_run_datetime.astimezone(tz.tzlocal()).isoformat()
-            if latest_run_datetime
-            else None,
-            latest_run_status=test_db_row.latest_run_status
-            if test_db_row.latest_run_status
-            else None,
+            latest_run_time=(
+                latest_run_datetime.astimezone(tz.tzlocal()).isoformat()
+                if latest_run_datetime
+                else None
+            ),
+            latest_run_time_utc=(
+                latest_run_datetime.isoformat() if latest_run_datetime else None
+            ),
+            latest_run_status=(
+                test_db_row.latest_run_status if test_db_row.latest_run_status else None
+            ),
         )
 
     @staticmethod

@@ -29,12 +29,20 @@ def _get_alert_node_name(alert: PendingAlertSchema) -> Optional[str]:
     alert_node_name = None
     alert_type = AlertTypes(alert.type)
     if alert_type is AlertTypes.TEST:
-        alert_node_name = alert.data.test_name  # type: ignore[union-attr]
+        alert_node_name = alert.data.test_name  # type: ignore[attr-defined]
     elif alert_type is AlertTypes.MODEL or alert_type is AlertTypes.SOURCE_FRESHNESS:
         alert_node_name = alert.data.model_unique_id
     else:
         raise ValueError(f"Unexpected alert type: {alert_type}")
     return alert_node_name
+
+
+def _safe_parse_status(raw_status: Optional[str]) -> Optional[Status]:
+    """Parse a raw alert status into a Status enum, or None if it isn't recognized."""
+    try:
+        return Status(raw_status)
+    except ValueError:
+        return None
 
 
 def apply_filters_schema_on_alert(
@@ -50,7 +58,9 @@ def apply_filters_schema_on_alert(
         else []
     )
     owners = alert.data.unified_owners or []
-    status = Status(alert.data.status)
+    status = _safe_parse_status(alert.data.status)
+    if status is None:
+        return False
     resource_type = ResourceType(alert.data.resource_type)
     if hasattr(alert.data, "test_unique_id"):
         test_ids = [alert.data.test_unique_id] if alert.data.test_unique_id else []
