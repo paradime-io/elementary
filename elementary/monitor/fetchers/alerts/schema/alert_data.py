@@ -25,6 +25,7 @@ DATADOG_SEVERITY_KEY = "datadog_severity"
 DATADOG_NOTIFICATION_HANDLE_KEY = "datadog_notification_handle"
 DATADOG_COMMANDER_UUID_KEY = "datadog_commander_uuid"
 DATADOG_INCIDENT_TYPE_UUID_KEY = "datadog_incident_type_uuid"
+DATADOG_INCIDENT_TITLE_KEY = "datadog_incident_title"
 
 
 class BaseAlertDataSchema(BaseModel):
@@ -73,6 +74,10 @@ class BaseAlertDataSchema(BaseModel):
     @property
     def datadog_incident_type_uuid(self) -> Optional[str]:
         return self.unified_meta.get(DATADOG_INCIDENT_TYPE_UUID_KEY)
+
+    @property
+    def datadog_incident_title(self) -> Optional[str]:
+        return self.unified_meta.get(DATADOG_INCIDENT_TITLE_KEY)
 
     @property
     def group_alerts_by(self) -> Optional[str]:
