@@ -30,13 +30,39 @@ from elementary.utils.log import get_logger
 
 logger = get_logger(__name__)
 
-# Datadog API limits
+# Datadog API limits. NOTE: Datadog enforces these in UTF-8 *bytes*, not
+# Unicode code points, so all truncation must go through _truncate_utf8().
 MAX_INCIDENT_TITLE_LENGTH = 2048
+MAX_INCIDENT_SUMMARY_LENGTH = 2048
+MAX_CUSTOMER_IMPACT_SCOPE_LENGTH = 1024
 
 # Retry policy for rate limits (429) and transient server errors (5xx)
 MAX_RETRIES = 5
 BASE_BACKOFF_SECONDS = 2
 MAX_BACKOFF_SECONDS = 60
+
+ELLIPSIS = "…"
+
+
+def _truncate_utf8(text: str, max_bytes: int, add_ellipsis: bool = False) -> str:
+    """Truncate ``text`` so its UTF-8 encoding fits within ``max_bytes``.
+
+    Datadog enforces incident field limits in bytes, not code points, so a
+    naive ``text[:max_bytes]`` slice can still exceed the limit when the string
+    contains multi-byte characters — e.g. the 📊 emoji that prefixes every
+    incident description is a single code point but 4 UTF-8 bytes, so a
+    2048-*character* summary is 2051 *bytes* and Datadog returns a 400. We cut
+    on the encoded bytes and drop any partial trailing character via
+    ``errors="ignore"``, so the result is always <= ``max_bytes`` bytes.
+    """
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+    budget = max_bytes
+    suffix = ""
+    if add_ellipsis:
+        suffix = ELLIPSIS
+        budget = max(0, max_bytes - len(ELLIPSIS.encode("utf-8")))
+    return text.encode("utf-8")[:budget].decode("utf-8", "ignore") + suffix
 
 
 def get_alert_token(alert_class_id: str) -> str:
@@ -184,10 +210,11 @@ def build_incident_payload(
 
     # Custom title from meta takes precedence over the auto-generated one
     base_title = alert_meta.get(DATADOG_INCIDENT_TITLE_KEY) or _generate_incident_title(alert)
+    # Truncate on UTF-8 bytes (Datadog's real limit), always preserving the
+    # ` [edr-xxxxxxxx]` dedup suffix so open-incident deduplication keeps working.
     token_suffix = f" [{token}]"
-    max_base_title_length = MAX_INCIDENT_TITLE_LENGTH - len(token_suffix)
-    if len(base_title) > max_base_title_length:
-        base_title = base_title[: max_base_title_length - 1] + "…"
+    max_base_title_bytes = MAX_INCIDENT_TITLE_LENGTH - len(token_suffix.encode("utf-8"))
+    base_title = _truncate_utf8(base_title, max_base_title_bytes, add_ellipsis=True)
     title = f"{base_title}{token_suffix}"
 
     # Generate description
@@ -233,14 +260,21 @@ def build_incident_payload(
             commander_user={"data": {"type": "users", "id": commander_user_id}}
         )
 
-    # Truncate customer_impact_scope to 1024 characters (Datadog API limit)
-    customer_impact_scope = title[:1024] if config.customer_impacted else None
+    # Truncate customer_impact_scope to the Datadog API limit (bytes)
+    customer_impact_scope = (
+        _truncate_utf8(title, MAX_CUSTOMER_IMPACT_SCOPE_LENGTH)
+        if config.customer_impacted
+        else None
+    )
 
     # Build fields dictionary
     fields = {
         "severity": {"type": "dropdown", "value": severity},
         "state": {"type": "dropdown", "value": "active"},
-        "summary": {"type": "textbox", "value": description[:2048]},  # Datadog limit
+        "summary": {
+            "type": "textbox",
+            "value": _truncate_utf8(description, MAX_INCIDENT_SUMMARY_LENGTH),
+        },
     }
 
     # Per-alert incident type UUID
