@@ -112,6 +112,7 @@ class DataMonitoringAlerts(DataMonitoring):
         global_suppression_interval: int = 0,
         override_config: bool = False,
         populate_data: bool = True,
+        ignore_send_failures: bool = False,
     ):
         super().__init__(
             config, tracking, force_update_dbt_package, disable_samples, selector_filter
@@ -119,6 +120,7 @@ class DataMonitoringAlerts(DataMonitoring):
 
         self.global_suppression_interval = global_suppression_interval
         self.override_config = override_config
+        self.ignore_send_failures = ignore_send_failures
         self.should_populate_data = populate_data
         self.alerts_api = AlertsAPI(
             self.internal_dbt_runner,
@@ -407,7 +409,8 @@ class DataMonitoringAlerts(DataMonitoring):
                         logger.error(
                             f"Could not send the alert - {alert.id}. Full alert: {json.dumps(alert.data)}"
                         )
-                    self.success = False
+                    if not self.ignore_send_failures:
+                        self.success = False
 
         # Now update as sent:
         self.sent_alert_count = len(sent_successfully_alerts)
