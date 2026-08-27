@@ -6,9 +6,11 @@ from elementary.monitor.data_monitoring.alerts.data_monitoring_alerts import (
     DataMonitoringAlerts,
 )
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.client import (
+    MAX_INCIDENT_SUMMARY_LENGTH,
     MAX_INCIDENT_TITLE_LENGTH,
     MAX_RETRIES,
     DatadogApiClient,
+    _truncate_utf8,
     build_incident_payload,
     get_alert_token,
 )
@@ -194,6 +196,59 @@ def test_incident_title_custom_override_from_meta():
     title = payload.data.attributes.title
     token_suffix = f" [{get_alert_token(alert.alert_class_id)}]"
     assert title == f"Orders freshness check failed{token_suffix}"
+
+
+def test_truncate_utf8_counts_bytes_not_code_points():
+    # Reproduces the Datadog 400: a 📊 (U+1F4CA) is one code point but 4 UTF-8
+    # bytes, so a 2048-*character* string is 2051 *bytes*. Naive slicing keeps
+    # 2048 chars (still 2051 bytes); _truncate_utf8 must cap the byte length.
+    text = "📊" + "x" * 2047
+    assert len(text) == 2048
+    assert len(text.encode("utf-8")) == 2051
+
+    result = _truncate_utf8(text, 2048)
+
+    assert len(result.encode("utf-8")) <= 2048
+    # No partial/mojibake character at the cut point.
+    assert result == result.encode("utf-8").decode("utf-8")
+
+
+def test_truncate_utf8_passthrough_when_within_limit():
+    text = "📊 short summary"
+    assert _truncate_utf8(text, MAX_INCIDENT_SUMMARY_LENGTH) == text
+
+
+def test_truncate_utf8_with_ellipsis_stays_within_byte_budget():
+    result = _truncate_utf8("x" * 5000, 2048, add_ellipsis=True)
+    assert len(result.encode("utf-8")) <= 2048
+    assert result.endswith("…")
+
+
+def test_incident_summary_truncated_to_datadog_byte_limit():
+    config = DatadogConfig(api_key="k", application_key="a")
+    alert = _FakeAlert(summary="short summary")
+    # Long error message drives a description well past 2048 bytes; the
+    # generator prefixes it with the 📊 emoji (4 bytes), which is what pushed
+    # the character-truncated payload to 2051 bytes in production.
+    alert.error_message = "y" * 5000
+
+    payload = build_incident_payload(config=config, alert=alert)
+
+    summary = payload.data.attributes.fields["summary"]["value"]
+    assert summary.startswith("📊")
+    assert len(summary.encode("utf-8")) <= MAX_INCIDENT_SUMMARY_LENGTH
+
+
+def test_incident_title_within_byte_limit_with_multibyte_summary():
+    config = DatadogConfig(api_key="k", application_key="a")
+    alert = _FakeAlert(summary="📊" * 5000)
+
+    payload = build_incident_payload(config=config, alert=alert)
+
+    title = payload.data.attributes.title
+    token_suffix = f" [{get_alert_token(alert.alert_class_id)}]"
+    assert len(title.encode("utf-8")) <= MAX_INCIDENT_TITLE_LENGTH
+    assert title.endswith(token_suffix)
 
 
 def _make_data_monitoring_alerts(ignore_send_failures: bool) -> DataMonitoringAlerts:
