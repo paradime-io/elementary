@@ -4,6 +4,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
 
+from elementary.monitor.alerts.alert_messages.alert_fields import (
+    AlertField as _AlertField,
+)
 from elementary.monitor.alerts.alerts_groups import GroupedByTableAlerts
 from elementary.monitor.alerts.alerts_groups.base_alerts_group import BaseAlertsGroup
 from elementary.monitor.alerts.model_alert import ModelAlertModel
@@ -18,7 +21,6 @@ from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import
     DatadogNotificationHandle,
     DatadogSite,
 )
-from elementary.monitor.alerts.alert_messages.alert_fields import AlertField as _AlertField
 from elementary.monitor.fetchers.alerts.schema.alert_data import (
     DATADOG_COMMANDER_UUID_KEY,
     DATADOG_INCIDENT_TITLE_KEY,
@@ -79,9 +81,11 @@ class DatadogApiClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        self.base_url = f"https://api.{site.value}"
+        self.base_url = f"https://api.{site.value}"  # noqa: E231
 
-    def _request_with_retries(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _request_with_retries(
+        self, method: str, url: str, **kwargs
+    ) -> requests.Response:
         """Send a request, retrying on 429 (rate limit) and 5xx with backoff.
 
         Honors Datadog's Retry-After / x-ratelimit-reset headers when present,
@@ -99,7 +103,7 @@ class DatadogApiClient:
                 last_connection_error = e
                 if attempt == MAX_RETRIES:
                     raise
-                delay = min(BASE_BACKOFF_SECONDS * (2 ** attempt), MAX_BACKOFF_SECONDS)
+                delay = min(BASE_BACKOFF_SECONDS * (2**attempt), MAX_BACKOFF_SECONDS)
                 logger.warning(
                     f"Datadog request failed ({e}) — retrying in {delay}s "
                     f"({attempt + 1}/{MAX_RETRIES})."
@@ -116,13 +120,21 @@ class DatadogApiClient:
                 "x-ratelimit-reset"
             )
             try:
-                delay = float(retry_after) if retry_after else BASE_BACKOFF_SECONDS * (2 ** attempt)
+                delay = (
+                    float(retry_after)
+                    if retry_after
+                    else BASE_BACKOFF_SECONDS * (2**attempt)
+                )
             except ValueError:
-                delay = BASE_BACKOFF_SECONDS * (2 ** attempt)
+                delay = BASE_BACKOFF_SECONDS * (2**attempt)
             delay = min(max(delay, 1), MAX_BACKOFF_SECONDS)
-            reason = "rate limited" if response.status_code == 429 else f"server error {response.status_code}"
+            reason = (
+                "rate limited"
+                if response.status_code == 429
+                else f"server error {response.status_code}"
+            )
             logger.warning(
-                f"Datadog API {reason} — retrying in {delay:.0f}s ({attempt + 1}/{MAX_RETRIES})."
+                f"Datadog API {reason} — retrying in {delay:.0f}s ({attempt + 1}/{MAX_RETRIES})."  # noqa: E231
             )
             time.sleep(delay)
 
@@ -130,7 +142,9 @@ class DatadogApiClient:
             "Datadog request failed after retries"
         )
 
-    def create_incident(self, payload: CreateIncidentInput) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def create_incident(
+        self, payload: CreateIncidentInput
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """Create a Datadog incident and return (success, response_data)"""
         url = f"{self.base_url}/api/v2/incidents"
 
@@ -142,7 +156,7 @@ class DatadogApiClient:
             )
 
             if response.ok:
-                logger.info(f"Successfully created Datadog incident")
+                logger.info("Successfully created Datadog incident")
                 return True, response.json()
             else:
                 try:
@@ -158,7 +172,7 @@ class DatadogApiClient:
                         f"Response: {response.text}"
                     )
                     return False, None
-                    
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Request failed when creating Datadog incident: {e}")
             return False, None
@@ -172,7 +186,7 @@ class DatadogApiClient:
         """
         # token = "edr-06ab46a2" — safe to use directly in DD query syntax (no colon)
         url = f"{self.base_url}/api/v2/incidents/search"
-        params = {"query": f"state:active {token}", "page[size]": 10}
+        params = {"query": f"state:active {token}", "page[size]": 10}  # noqa: E231
         try:
             response = self._request_with_retries("GET", url, params=params)
             if not response.ok:
@@ -180,12 +194,21 @@ class DatadogApiClient:
                     f"Datadog incident search returned {response.status_code} — proceeding with creation."
                 )
                 return None
-            incidents = response.json().get("data", {}).get("attributes", {}).get("incidents", [])
+            incidents = (
+                response.json()
+                .get("data", {})
+                .get("attributes", {})
+                .get("incidents", [])
+            )
             for incident in incidents:
                 inner = incident.get("data", {})
-                return inner.get("id")  # state:active + hash already pinpoints the right one
+                return inner.get(
+                    "id"
+                )  # state:active + hash already pinpoints the right one
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Datadog incident search failed: {e} — proceeding with creation.")
+            logger.warning(
+                f"Datadog incident search failed: {e} — proceeding with creation."
+            )
         return None
 
 
@@ -200,16 +223,18 @@ def build_incident_payload(
     ],
 ) -> CreateIncidentInput:
     """Build a Datadog incident payload from an Elementary alert"""
-    
+
     # Generate title with embedded deduplication token
     alert_class_id = getattr(alert, "alert_class_id", alert.id)
     token = get_alert_token(alert_class_id)
 
     # Per-alert overrides from dbt meta.alerts_config
-    alert_meta = getattr(alert, 'unified_meta', None) or {}
+    alert_meta = getattr(alert, "unified_meta", None) or {}
 
     # Custom title from meta takes precedence over the auto-generated one
-    base_title = alert_meta.get(DATADOG_INCIDENT_TITLE_KEY) or _generate_incident_title(alert)
+    base_title = alert_meta.get(DATADOG_INCIDENT_TITLE_KEY) or _generate_incident_title(
+        alert
+    )
     # Truncate on UTF-8 bytes (Datadog's real limit), always preserving the
     # ` [edr-xxxxxxxx]` dedup suffix so open-incident deduplication keeps working.
     token_suffix = f" [{token}]"
@@ -225,10 +250,9 @@ def build_incident_payload(
     idempotency_key = f"elementary-{alert.id}"
 
     # Determine severity based on alert status and tags
-    alert_tags = getattr(alert, 'tags', None) or []
+    alert_tags = getattr(alert, "tags", None) or []
     severity = config.get_severity_for_status(
-        getattr(alert, 'status', 'unknown'),
-        alert_tags
+        getattr(alert, "status", "unknown"), alert_tags
     )
 
     # Severity override
@@ -247,13 +271,19 @@ def build_incident_payload(
     # Per-alert notification handle (e.g. @team-first-response or @user@email.com)
     alert_notification_handle = alert_meta.get(DATADOG_NOTIFICATION_HANDLE_KEY)
     if alert_notification_handle:
-        handle = alert_notification_handle if alert_notification_handle.startswith("@") else f"@{alert_notification_handle}"
+        handle = (
+            alert_notification_handle
+            if alert_notification_handle.startswith("@")
+            else f"@{alert_notification_handle}"
+        )
         if notification_handles is None:
             notification_handles = []
         notification_handles.append(DatadogNotificationHandle(handle=handle))
 
     # Build commander relationship (per-alert override takes precedence over config)
-    commander_user_id = alert_meta.get(DATADOG_COMMANDER_UUID_KEY) or config.commander_user_id
+    commander_user_id = (
+        alert_meta.get(DATADOG_COMMANDER_UUID_KEY) or config.commander_user_id
+    )
     relationships = None
     if commander_user_id:
         relationships = DatadogIncidentRelationships(
@@ -315,7 +345,9 @@ def _generate_incident_title(
         else:
             return f"[Elementary] Test Failure: {alert.summary}"
     elif isinstance(alert, ModelAlertModel):
-        alert_type = "Snapshot Error" if alert.materialization == "snapshot" else "Model Error"
+        alert_type = (
+            "Snapshot Error" if alert.materialization == "snapshot" else "Model Error"
+        )
         return f"[Elementary] {alert_type}: {alert.summary}"
     elif isinstance(alert, SourceFreshnessAlertModel):
         return f"[Elementary] Source Freshness: {alert.summary}"
@@ -335,98 +367,103 @@ def _generate_incident_description(
     ]
 ) -> str:
     """Generate a comprehensive incident description from an alert"""
-    
+
     lines = ["📊 **Elementary Data Quality Alert**", ""]
-    
+
     # Basic information
-    if hasattr(alert, 'table_full_name') and alert.table_full_name:
+    if hasattr(alert, "table_full_name") and alert.table_full_name:
         lines.append(f"**Table**: {alert.table_full_name}")
-    
-    if hasattr(alert, 'test_name') and alert.test_name:
+
+    if hasattr(alert, "test_name") and alert.test_name:
         lines.append(f"**Test**: {alert.test_name}")
-    elif hasattr(alert, 'concise_name') and alert.concise_name:
+    elif hasattr(alert, "concise_name") and alert.concise_name:
         lines.append(f"**Test**: {alert.concise_name}")
-    
-    if hasattr(alert, 'status') and alert.status:
+
+    if hasattr(alert, "status") and alert.status:
         lines.append(f"**Status**: {alert.status}")
-    
-    if hasattr(alert, 'detected_at_str') and alert.detected_at_str:
+
+    if hasattr(alert, "detected_at_str") and alert.detected_at_str:
         lines.append(f"**Detected**: {alert.detected_at_str}")
-    
+
     lines.append("")
-    
+
     # Error details
     error_msg = None
-    if hasattr(alert, 'error_message') and alert.error_message:
+    if hasattr(alert, "error_message") and alert.error_message:
         error_msg = alert.error_message
-    elif hasattr(alert, 'message') and alert.message:
+    elif hasattr(alert, "message") and alert.message:
         error_msg = alert.message
-    elif hasattr(alert, 'result_description') and alert.result_description:
+    elif hasattr(alert, "result_description") and alert.result_description:
         error_msg = alert.result_description
-    
+
     if error_msg:
-        lines.extend([
-            "**Error Details**:",
-            f"```",
-            error_msg.strip(),
-            "```",
-            ""
-        ])
-    
+        lines.extend(["**Error Details**:", "```", error_msg.strip(), "```", ""])
+
     # Test results sample
-    if hasattr(alert, 'test_rows_sample') and alert.test_rows_sample:
+    if hasattr(alert, "test_rows_sample") and alert.test_rows_sample:
         import json
+
         sample_str = str(alert.test_rows_sample)
         if isinstance(alert.test_rows_sample, list):
             sample_str = json.dumps(alert.test_rows_sample, indent=2)
-        lines.extend([
-            "**Test Results Sample**:",
-            "```",
-            sample_str,
-            "```",
-            ""
-        ])
+        lines.extend(["**Test Results Sample**:", "```", sample_str, "```", ""])
 
     # Test results query
-    alert_fields = getattr(alert, "alert_fields", None) or [f.value for f in _AlertField]
+    alert_fields = getattr(alert, "alert_fields", None) or [
+        f.value for f in _AlertField
+    ]
     if (
         isinstance(alert, TestAlertModel)
         and alert.test_results_query
         and _AlertField.TEST_QUERY.value in alert_fields
     ):
-        lines.extend([
-            "**Test Results Query**:",
-            "```sql",
-            alert.test_results_query.strip(),
-            "```",
-            ""
-        ])
+        lines.extend(
+            [
+                "**Test Results Query**:",
+                "```sql",
+                alert.test_results_query.strip(),
+                "```",
+                "",
+            ]
+        )
 
     # Metadata
     metadata_lines = []
-    if hasattr(alert, 'owners') and alert.owners:
-        owners_str = ', '.join(str(owner) for owner in alert.owners) if isinstance(alert.owners, list) else str(alert.owners)
+    if hasattr(alert, "owners") and alert.owners:
+        owners_str = (
+            ", ".join(str(owner) for owner in alert.owners)
+            if isinstance(alert.owners, list)
+            else str(alert.owners)
+        )
         metadata_lines.append(f"**Owners**: {owners_str}")
-    
-    if hasattr(alert, 'tags') and alert.tags:
-        tags_str = ', '.join(str(tag) for tag in alert.tags) if isinstance(alert.tags, list) else str(alert.tags)
+
+    if hasattr(alert, "tags") and alert.tags:
+        tags_str = (
+            ", ".join(str(tag) for tag in alert.tags)
+            if isinstance(alert.tags, list)
+            else str(alert.tags)
+        )
         metadata_lines.append(f"**Tags**: {tags_str}")
-    
-    if hasattr(alert, 'subscribers') and alert.subscribers:
-        subscribers_str = ', '.join(str(sub) for sub in alert.subscribers) if isinstance(alert.subscribers, list) else str(alert.subscribers)
+
+    if hasattr(alert, "subscribers") and alert.subscribers:
+        subscribers_str = (
+            ", ".join(str(sub) for sub in alert.subscribers)
+            if isinstance(alert.subscribers, list)
+            else str(alert.subscribers)
+        )
         metadata_lines.append(f"**Subscribers**: {subscribers_str}")
-    
-    if hasattr(alert, 'column_name') and alert.column_name:
+
+    if hasattr(alert, "column_name") and alert.column_name:
         metadata_lines.append(f"**Column**: {alert.column_name}")
-    
+
     if metadata_lines:
         lines.extend(metadata_lines)
         lines.append("")
-    
+
     # Report link
-    if hasattr(alert, 'get_report_link') and callable(alert.get_report_link):
+    if hasattr(alert, "get_report_link") and callable(alert.get_report_link):
         report_link = alert.get_report_link()
         if report_link:
             lines.append(f"🔗 **[View Details]({report_link.url})**")
-    
+
     return "\n".join(lines)

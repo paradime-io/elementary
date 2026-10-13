@@ -146,11 +146,7 @@ def test_search_open_incidents_retries_on_rate_limit(mock_request, mock_sleep):
         _make_response(429, headers={"x-ratelimit-reset": "5"}),
         _make_response(
             200,
-            {
-                "data": {
-                    "attributes": {"incidents": [{"data": {"id": "incident-9"}}]}
-                }
-            },
+            {"data": {"attributes": {"incidents": [{"data": {"id": "incident-9"}}]}}},
         ),
     ]
 

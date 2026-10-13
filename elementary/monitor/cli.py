@@ -310,7 +310,16 @@ def get_cli_properties() -> dict:
 @click.option(
     "--datadog-site",
     "-ds",
-    type=click.Choice(["datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com", "datadoghq.eu", "ap1.datadoghq.com", "ddog-gov.com"]),
+    type=click.Choice(
+        [
+            "datadoghq.com",
+            "us3.datadoghq.com",
+            "us5.datadoghq.com",
+            "datadoghq.eu",
+            "ap1.datadoghq.com",
+            "ddog-gov.com",
+        ]
+    ),
     default=None,
     help="Datadog site (e.g., datadoghq.com for US1, datadoghq.eu for EU1).",
 )

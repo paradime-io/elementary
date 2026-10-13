@@ -1,8 +1,7 @@
-import json
-from typing import Any, Dict, Union
+from typing import Union
 
 from elementary.config.config import Config
-from elementary.monitor.alerts.alerts_groups import AlertsGroup, GroupedByTableAlerts
+from elementary.monitor.alerts.alerts_groups import GroupedByTableAlerts
 from elementary.monitor.alerts.alerts_groups.base_alerts_group import BaseAlertsGroup
 from elementary.monitor.alerts.model_alert import ModelAlertModel
 from elementary.monitor.alerts.source_freshness_alert import SourceFreshnessAlertModel
@@ -44,27 +43,37 @@ class DatadogIntegration(BaseIntegration):
     def _initial_client(self, *args, **kwargs) -> DatadogApiClient:
         if not self.config.datadog_api_key or not self.config.datadog_application_key:
             raise Exception("Datadog API key and application key are required")
-        
+
         return DatadogApiClient(
             api_key=self.config.datadog_api_key,
             application_key=self.config.datadog_application_key,
-            site=DatadogSite(self.config.datadog_site) if self.config.datadog_site else DatadogSite.US1,
+            site=DatadogSite(self.config.datadog_site)
+            if self.config.datadog_site
+            else DatadogSite.US1,
         )
 
     def _build_datadog_config(self) -> DatadogConfig:
         """Build Datadog configuration from Elementary config"""
-        from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import DatadogIncidentSeverity
-        
+        from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
+            DatadogIncidentSeverity,
+        )
+
         return DatadogConfig(
             api_key=self.config.datadog_api_key or "",
             application_key=self.config.datadog_application_key or "",
-            site=DatadogSite(self.config.datadog_site) if self.config.datadog_site else DatadogSite.US1,
-            default_severity=getattr(self.config, 'datadog_default_severity', None) or DatadogIncidentSeverity.SEV3,
-            severity_mapping=getattr(self.config, 'datadog_severity_mapping', None),
-            customer_impacted=getattr(self.config, 'datadog_customer_impacted', None) or False,
-            commander_user_id=getattr(self.config, 'datadog_commander_user_id', None),
-            notification_handles=getattr(self.config, 'datadog_notification_handles', None),
-            tag_severity_rules=getattr(self.config, 'datadog_tag_severity_rules', None),
+            site=DatadogSite(self.config.datadog_site)
+            if self.config.datadog_site
+            else DatadogSite.US1,
+            default_severity=getattr(self.config, "datadog_default_severity", None)
+            or DatadogIncidentSeverity.SEV3,
+            severity_mapping=getattr(self.config, "datadog_severity_mapping", None),
+            customer_impacted=getattr(self.config, "datadog_customer_impacted", None)
+            or False,
+            commander_user_id=getattr(self.config, "datadog_commander_user_id", None),
+            notification_handles=getattr(
+                self.config, "datadog_notification_handles", None
+            ),
+            tag_severity_rules=getattr(self.config, "datadog_tag_severity_rules", None),
         )
 
     def send_alert(
@@ -98,8 +107,14 @@ class DatadogIntegration(BaseIntegration):
             success, response_data = self.client.create_incident(payload)
 
             if success:
-                incident_id = response_data.get("data", {}).get("id") if response_data else "unknown"
-                logger.info(f"Successfully created Datadog incident {incident_id} for alert {alert.id}")
+                incident_id = (
+                    response_data.get("data", {}).get("id")
+                    if response_data
+                    else "unknown"
+                )
+                logger.info(
+                    f"Successfully created Datadog incident {incident_id} for alert {alert.id}"
+                )
                 return True
             else:
                 logger.error(f"Failed to create Datadog incident for alert {alert.id}")
@@ -111,9 +126,8 @@ class DatadogIntegration(BaseIntegration):
 
     def send_test_message(self, *args, **kwargs) -> bool:
         """Send a test incident to verify Datadog integration"""
-        from elementary.monitor.alerts.test_alert import TestAlertModel
         from datetime import datetime, timezone
-        
+
         # Create a mock test alert for testing
         test_alert_data = {
             "id": "test-alert-123",
@@ -128,19 +142,21 @@ class DatadogIntegration(BaseIntegration):
             "tags": ["test", "integration"],
             "owners": ["elementary-team"],
         }
-        
+
         # This is a simplified mock - in practice you'd create a proper TestAlertModel
         # For now, we'll create a basic object with the required attributes
         class MockTestAlert:
             def __init__(self, data):
                 for key, value in data.items():
                     setattr(self, key, value)
-                self.detected_at_str = self.detected_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                self.detected_at_str = self.detected_at.strftime(
+                    "%Y-%m-%d %H:%M:%S UTC"
+                )
                 self.is_elementary_test = True
-            
+
             def get_report_link(self):
                 return None
-                
+
         mock_alert = MockTestAlert(test_alert_data)
         return self.send_alert(mock_alert)
 
@@ -161,11 +177,15 @@ class DatadogIntegration(BaseIntegration):
         # Not used for Datadog integration - incidents are created directly
         return None
 
-    def _get_source_freshness_template(self, alert: SourceFreshnessAlertModel, *args, **kwargs):
+    def _get_source_freshness_template(
+        self, alert: SourceFreshnessAlertModel, *args, **kwargs
+    ):
         # Not used for Datadog integration - incidents are created directly
         return None
 
-    def _get_group_by_table_template(self, alert: GroupedByTableAlerts, *args, **kwargs):
+    def _get_group_by_table_template(
+        self, alert: GroupedByTableAlerts, *args, **kwargs
+    ):
         # Not used for Datadog integration - incidents are created directly
         return None
 
