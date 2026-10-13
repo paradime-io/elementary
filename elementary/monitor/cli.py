@@ -15,9 +15,7 @@ from elementary.monitor.dbt_init import DBTInit
 from elementary.monitor.debug import Debug
 from elementary.tracking.anonymous_tracking import AnonymousCommandLineTracking
 from elementary.utils import bucket_path
-from elementary.utils.ordered_yaml import OrderedYaml
-
-yaml = OrderedYaml()
+from elementary.utils.cli_utils import dbt_vars_option
 
 
 class Command:
@@ -43,6 +41,7 @@ def common_options(cmd: str):
             default=False,
             help="Disable sampling of data. Useful if your data contains PII.",
         )(func)
+        func = dbt_vars_option(func)
         func = click.option(
             "--dbt-quoting",
             "-dq",
@@ -74,6 +73,15 @@ def common_options(cmd: str):
                 type=str,
                 default=None,
                 help="The Slack token for your workspace.",
+            )(func)
+            func = click.option(
+                "--ssl-ca-bundle",
+                type=str,
+                default=None,
+                help="Override the CA bundle used for SSL connections. "
+                "Accepted values: 'certifi' (use the certifi package bundle), "
+                "'system' (use the OS CA store), or a file path to a custom CA bundle. "
+                "When omitted each underlying library uses its own default.",
             )(func)
         if cmd in (Command.REPORT, Command.SEND_REPORT):
             func = click.option(
@@ -124,7 +132,7 @@ def common_options(cmd: str):
             type=click.Path(exists=True),
             default=None,
             help="Which directory to look in for the profiles.yml file. "
-            "If not set, edr will look in the current working directory first, then HOME/.dbt/",
+            "If not set, edr will look in HOME/.dbt/",
         )(func)
         func = click.option(
             "--project-dir",
@@ -228,12 +236,6 @@ def get_cli_properties() -> dict:
     default=False,
     help="Force running a full refresh of all incremental models in the edr dbt package (usually this is not needed, "
     "see documentation to learn more).",
-)
-@click.option(
-    "--dbt-vars",
-    type=str,
-    default=None,
-    help="Specify raw YAML string of your dbt variables.",
 )
 @click.option(
     "--test",
@@ -371,6 +373,7 @@ def monitor(
     maximum_columns_in_alert_samples,
     ignore_send_failures,
     quiet_logs,
+    ssl_ca_bundle,
 ):
     """
     Get alerts on failures in dbt jobs.
@@ -385,7 +388,6 @@ def monitor(
             fg="bright_red",
         )
         slack_webhook = deprecated_slack_webhook
-    vars = yaml.loads(dbt_vars) if dbt_vars else None
     config = Config(
         config_dir=config_dir,
         profiles_dir=profiles_dir,
@@ -409,6 +411,9 @@ def monitor(
         datadog_default_severity=datadog_default_severity,
         maximum_columns_in_alert_samples=maximum_columns_in_alert_samples,
         quiet_logs=quiet_logs,
+        ssl_ca_bundle=ssl_ca_bundle,
+        dbt_vars=dbt_vars,
+        days_back=days_back,
     )
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.set_env("use_select", bool(select))
@@ -444,9 +449,7 @@ def monitor(
         anonymous_tracking.track_cli_start(
             Command.MONITOR, get_cli_properties(), ctx.command.name
         )
-        success = data_monitoring.run_alerts(
-            days_back, full_refresh_dbt_package, dbt_vars=vars
-        )
+        success = data_monitoring.run_alerts(days_back, full_refresh_dbt_package)
         anonymous_tracking.track_cli_end(
             Command.MONITOR, data_monitoring.properties(), ctx.command.name
         )
@@ -505,6 +508,7 @@ def report(
     select,
     target_path,
     quiet_logs,
+    dbt_vars,
 ):
     """
     Generate a local observability report of your warehouse.
@@ -519,6 +523,7 @@ def report(
         dbt_quoting=dbt_quoting,
         env=env,
         quiet_logs=quiet_logs,
+        dbt_vars=dbt_vars,
     )
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.set_env("use_select", bool(select))
@@ -737,6 +742,8 @@ def send_report(
     include,
     target_path,
     quiet_logs,
+    ssl_ca_bundle,
+    dbt_vars,
 ):
     """
     Generate and send the report to an external platform.
@@ -780,6 +787,8 @@ def send_report(
         env=env,
         project_name=project_name,
         quiet_logs=quiet_logs,
+        ssl_ca_bundle=ssl_ca_bundle,
+        dbt_vars=dbt_vars,
     )
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.set_env("use_select", bool(select))
@@ -839,11 +848,12 @@ def send_report(
     type=click.Path(exists=True),
     default=None,
     help="Which directory to look in for the profiles.yml file. "
-    "If not set, edr will look in the current working directory first, then HOME/.dbt/",
+    "If not set, edr will look in HOME/.dbt/",
 )
+@dbt_vars_option
 @click.pass_context
-def debug(ctx, profiles_dir):
-    config = Config(profiles_dir=profiles_dir)
+def debug(ctx, profiles_dir, dbt_vars):
+    config = Config(profiles_dir=profiles_dir, dbt_vars=dbt_vars)
     anonymous_tracking = AnonymousCommandLineTracking(config)
     anonymous_tracking.track_cli_start(Command.DEBUG, None, ctx.command.name)
     success = Debug(config).run()

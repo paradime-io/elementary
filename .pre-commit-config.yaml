@@ -46,13 +46,39 @@ repos:
 
   - repo: local
     hooks:
+      - id: strip-name-from-package-lock
+        name: Strip 'name' fields from package-lock.yml (unsupported in dbt 1.8)
+        entry: |
+          python -c "
+          import yaml, sys
+          lock_file = 'elementary/monitor/dbt_project/package-lock.yml'
+          with open(lock_file) as f:
+              data = yaml.safe_load(f)
+          changed = False
+          for pkg in data.get('packages', []):
+              if 'name' in pkg:
+                  del pkg['name']
+                  changed = True
+          if changed:
+              with open(lock_file, 'w') as f:
+                  yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+              print(f'Removed unsupported name fields from {lock_file}')
+              sys.exit(1)
+          "
+        language: system
+        files: package-lock\.yml$
+        pass_filenames: false
+
       - id: verify-dbt-project-packages-lock
         name: Verify internal dbt project package lock
         entry: |
           bash -c '
-            dbt_version=$(python -c "from dbt.version import __version__; print(__version__)");
-            required_version="1.8";
-            if [[ $(echo -e "$dbt_version\n$required_version" | sort -V | tail -1) == "$dbt_version" ]]; then
+            dbt_version=$(python -c "from importlib.metadata import version; print(version(\"dbt-core\"))" 2>/dev/null || echo "");
+            if [[ -z "$dbt_version" ]]; then
+              echo "Skipping hook, dbt-core is not installed.";
+            elif [[ "$dbt_version" == 2* ]]; then
+              echo "Skipping hook, dbt-core version is $dbt_version (>= 2.0).";
+            elif [[ $(echo -e "$dbt_version\n1.8" | sort -V | tail -1) == "$dbt_version" ]]; then
               dbt deps --lock --project-dir elementary/monitor/dbt_project && git diff --quiet elementary/monitor/dbt_project/package-lock.yml || (echo "Changes detected in package lock file!" && exit 1);
             else
               echo "Skipping hook, dbt version is $dbt_version (< 1.8).";

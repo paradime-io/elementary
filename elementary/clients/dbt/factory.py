@@ -1,20 +1,34 @@
 import os
+import shutil
 from enum import Enum
 from typing import Any, Dict, Optional, Type
 
-from dbt.version import __version__ as dbt_version_string
 from packaging import version
 
 from elementary.clients.dbt.command_line_dbt_runner import CommandLineDbtRunner
-from elementary.clients.dbt.dbt_fusion_runner import DbtFusionRunner
+from elementary.clients.dbt.dbt2_runner import Dbt2Runner
+from elementary.clients.dbt.dbt_installation import (
+    get_dbt_core_version,
+    is_dbt2_binary_available,
+)
 from elementary.clients.dbt.subprocess_dbt_runner import SubprocessDbtRunner
+from elementary.config.config import Config
+from elementary.exceptions.exceptions import NoDbtInstallationError
+from elementary.utils.log import get_logger
 
-DBT_VERSION = version.Version(dbt_version_string)
+logger = get_logger(__name__)
 
 
 class RunnerMethod(Enum):
+    # DBT1_SUBPROCESS and DBT1_API drive dbt-core 1.x (DBT1_API requires
+    # dbt-core >= 1.5.0).
+    DBT1_SUBPROCESS = "subprocess"
+    DBT1_API = "api"
+    DBT2 = "dbt2"
+    # Legacy aliases for the dbt 1.x runner methods.
     SUBPROCESS = "subprocess"
     API = "api"
+    # Legacy alias for DBT2 (dbt v2 is the Fusion engine).
     FUSION = "fusion"
 
 
@@ -47,25 +61,64 @@ def create_dbt_runner(
     )
 
 
+def create_dbt_runner_from_config(
+    config: Config,
+    project_dir: str,
+    force_dbt_deps: bool = False,
+) -> CommandLineDbtRunner:
+    return create_dbt_runner(
+        project_dir,
+        config.profiles_dir,
+        config.profile_target,
+        env_vars=config.env_vars,
+        vars=config.dbt_vars,
+        run_deps_if_needed=config.run_dbt_deps_if_needed,
+        force_dbt_deps=force_dbt_deps,
+    )
+
+
 def get_dbt_runner_method() -> RunnerMethod:
     runner_method = os.getenv("DBT_RUNNER_METHOD")
     if runner_method:
         return RunnerMethod(runner_method)
 
-    if DBT_VERSION >= version.Version("1.5.0"):
-        return RunnerMethod.API
-    return RunnerMethod.SUBPROCESS
+    dbt_core_version = get_dbt_core_version()
+    if is_dbt2_binary_available():
+        if dbt_core_version is not None and dbt_core_version.major < 2:
+            logger.info(
+                f"Both dbt-core {dbt_core_version} and a dbt v2 installation were "
+                "detected - using dbt v2. To use dbt-core instead, set "
+                "DBT_RUNNER_METHOD=api (or uninstall dbt v2)."
+            )
+        return RunnerMethod.DBT2
+
+    if dbt_core_version is not None:
+        # dbt-core published some 2.x pre-releases before dbt v2 moved to the
+        # dbt/dbt-oss packages - drive those with the dbt v2 runner too.
+        if dbt_core_version.major >= 2:
+            return RunnerMethod.DBT2
+        if dbt_core_version >= version.Version("1.5.0"):
+            return RunnerMethod.DBT1_API
+        return RunnerMethod.DBT1_SUBPROCESS
+
+    # dbt may be installed without pip package metadata (e.g. a system-wide or
+    # pipx-managed dbt 1.x) - fall back to running it as a subprocess.
+    if shutil.which("dbt"):
+        return RunnerMethod.DBT1_SUBPROCESS
+
+    raise NoDbtInstallationError()
 
 
 def get_dbt_runner_class(runner_method: RunnerMethod) -> Type[CommandLineDbtRunner]:
-    if runner_method == RunnerMethod.API:
-        # Import it internally since it will fail if the dbt version is below 1.5.0
+    if runner_method == RunnerMethod.DBT1_API:
+        # Import it internally since it will fail if dbt-core is not installed
+        # or its version is below 1.5.0
         from elementary.clients.dbt.api_dbt_runner import APIDbtRunner
 
         return APIDbtRunner
-    elif runner_method == RunnerMethod.SUBPROCESS:
+    elif runner_method == RunnerMethod.DBT1_SUBPROCESS:
         return SubprocessDbtRunner
-    elif runner_method == RunnerMethod.FUSION:
-        return DbtFusionRunner
+    elif runner_method in (RunnerMethod.DBT2, RunnerMethod.FUSION):
+        return Dbt2Runner
     else:
         raise ValueError(f"Invalid runner method: {runner_method}")

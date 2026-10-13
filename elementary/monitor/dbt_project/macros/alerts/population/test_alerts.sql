@@ -121,19 +121,19 @@
             status,
             result_rows
         from elementary_test_results
-        where lower(elementary_test_results.status) != 'pass'
+        where lower(elementary_test_results.status) not in ('pass', 'reused')
         and {{ elementary.edr_cast_as_timestamp('detected_at') }} > {{ elementary.edr_timeadd('day', -1 * days_back, elementary.edr_current_timestamp()) }}
     )
 
     select distinct
         failed_tests.alert_id,
         {# Generate elementary unique id which is used to identify between tests, and set it as alert_class_id #}
-        coalesce(failed_tests.test_unique_id, 'None') || '.' || coalesce(failed_tests.column_name, 'None') || '.' || coalesce(failed_tests.sub_type, 'None') as alert_class_id,
+        {{ dbt.concat(["coalesce(failed_tests.test_unique_id, 'None')", "'.'", "coalesce(failed_tests.column_name, 'None')", "'.'", "coalesce(failed_tests.sub_type, 'None')"]) }} as alert_class_id,
         case
             when failed_tests.test_type = 'schema_change' then failed_tests.test_unique_id
             {# In old versions of elementary, elementary_test_results doesn't contain test_short_name, so we use dbt_test short_name. #}
             when tests.short_name = 'dimension_anomalies' then failed_tests.test_unique_id
-            else coalesce(failed_tests.test_unique_id, 'None') || '.' || coalesce(failed_tests.column_name, 'None') || '.' || coalesce(failed_tests.sub_type, 'None')
+            else {{ dbt.concat(["coalesce(failed_tests.test_unique_id, 'None')", "'.'", "coalesce(failed_tests.column_name, 'None')", "'.'", "coalesce(failed_tests.sub_type, 'None')"]) }}
         end as elementary_unique_id,
         failed_tests.data_issue_id,
         failed_tests.test_execution_id,

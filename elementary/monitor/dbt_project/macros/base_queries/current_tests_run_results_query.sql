@@ -1,4 +1,4 @@
-{% macro current_tests_run_results_query(days_back = none, invocation_id = none) %}
+{% macro current_tests_run_results_query(days_back = none, invocation_id = none, skip_test_result_rows = false) %}
     with elementary_test_results as (
         select * from {{ ref('elementary', 'elementary_test_results') }}
         {% if days_back %}
@@ -49,7 +49,7 @@
             when elementary_test_results.test_type = 'schema_change' then elementary_test_results.test_unique_id
             {# In old versions of elementary, elementary_test_results doesn't contain test_short_name, so we use dbt_test short_name. #}
             when dbt_tests.short_name = 'dimension_anomalies' then elementary_test_results.test_unique_id
-            else coalesce(elementary_test_results.test_unique_id, 'None') || '.' || coalesce(nullif(elementary_test_results.column_name, ''), 'None') || '.' || coalesce(elementary_test_results.test_sub_type, 'None')
+            else {{ dbt.concat(["coalesce(elementary_test_results.test_unique_id, 'None')", "'.'", "coalesce(nullif(elementary_test_results.column_name, ''), 'None')", "'.'", "coalesce(elementary_test_results.test_sub_type, 'None')"]) }}
         end as elementary_unique_id,
         elementary_test_results.invocation_id,
         elementary_test_results.data_issue_id,
@@ -79,7 +79,7 @@
         dbt_tests.short_name,
         elementary_test_results.test_alias,
         elementary_test_results.failures,
-        elementary_test_results.result_rows,
+        {% if skip_test_result_rows %}null{% else %}elementary_test_results.result_rows{% endif %} as result_rows,
         dbt_tests.original_path,
         dbt_tests.meta,
         dbt_tests.description as test_description,

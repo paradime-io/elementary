@@ -17,3 +17,19 @@
 {% macro athena__get_adapter_unique_id() %}
     {{ return(target.s3_staging_dir) }}
 {% endmacro %}
+
+{% macro duckdb__get_adapter_unique_id() %}
+    {{ return(target.path) }}
+{% endmacro %}
+
+{% macro fabric__get_adapter_unique_id() %}
+    {{ return(target.server) }}
+{% endmacro %}
+
+{% macro sqlserver__get_adapter_unique_id() %}
+    {{ return(target.server) }}
+{% endmacro %}
+
+{% macro fabricspark__get_adapter_unique_id() %}
+    {{ return(target.workspaceid) }}
+{% endmacro %}

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import Any, Optional
@@ -34,6 +35,14 @@ class TeamsWebhookHttpError(MessagingIntegrationError):
         super().__init__(
             f"Failed to send message to Teams webhook: {response.status_code}"
         )
+
+
+class TeamsWebhookPayloadTooLargeError(MessagingIntegrationError):
+    def __init__(self, response: requests.Response, payload_size: int | None = None):
+        self.status_code = response.status_code
+        self.response = response
+        size_info = f" ({payload_size} bytes)" if payload_size is not None else ""
+        super().__init__(f"Teams webhook payload size{size_info} exceeds limit")
 
 
 def send_adaptive_card(webhook_url: str, card: dict) -> requests.Response:
@@ -78,6 +87,7 @@ class TeamsWebhookMessagingIntegration(
         body: MessageBody,
     ) -> MessageSendResult[EmptyMessageContext]:
         card = format_adaptive_card(body)
+        payload_json = json.dumps(card)
         try:
             response = send_adaptive_card(self.url, card)
             # For the old teams webhook version of Teams simply returning status code 200
@@ -89,6 +99,11 @@ class TeamsWebhookMessagingIntegration(
             if response.status_code not in (HTTPStatus.OK, HTTPStatus.ACCEPTED) or (
                 response.status_code == HTTPStatus.OK and len(response.text) > 1
             ):
+                if "HTTP error 413" in response.text:
+                    raise TeamsWebhookPayloadTooLargeError(
+                        response, payload_size=len(payload_json)
+                    )
+
                 raise MessagingIntegrationError(
                     f"Could not post message to Teams via webhook. Status code: {response.status_code}, Error: {response.text}"
                 )
