@@ -2,6 +2,9 @@ from unittest import mock
 
 import requests
 
+from elementary.config.config import Config
+from elementary.monitor.alerts.alerts_groups import AlertsGroup, GroupedByTableAlerts
+from elementary.monitor.alerts.test_alert import TestAlertModel
 from elementary.monitor.data_monitoring.alerts.data_monitoring_alerts import (
     DataMonitoringAlerts,
 )
@@ -12,7 +15,11 @@ from elementary.monitor.data_monitoring.alerts.integrations.datadog.client impor
     DatadogApiClient,
     _truncate_utf8,
     build_incident_payload,
+    get_alert_class_id,
     get_alert_token,
+)
+from elementary.monitor.data_monitoring.alerts.integrations.datadog.datadog import (
+    DatadogIntegration,
 )
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
     CreateIncidentInput,
@@ -275,3 +282,125 @@ def test_send_failure_ignored_with_flag():
     assert data_monitoring.sent_alert_count == 0
     # Failed alerts must not be marked as sent, so they retry next run
     data_monitoring.alerts_api.update_sent_alerts.assert_called_once_with(alert_ids=[])
+
+
+def _make_test_alert(alert_id, alert_class_id, status="fail", model_meta=None):
+    return TestAlertModel(
+        id=alert_id,
+        test_unique_id=f"test.proj.{alert_class_id}",
+        elementary_unique_id=f"test.proj.{alert_class_id}.elementary",
+        test_name="not_null",
+        severity="ERROR",
+        test_type="dbt_test",
+        test_sub_type="generic",
+        test_short_name="not_null",
+        alert_class_id=alert_class_id,
+        table_name="orders",
+        model_unique_id="model.proj.orders",
+        database_name="db",
+        schema_name="analytics",
+        status=status,
+        model_meta=model_meta,
+    )
+
+
+def test_grouped_by_table_alerts_build_incident_payload():
+    config = DatadogConfig(api_key="k", application_key="a")
+    model_meta = {"datadog_notification_handle": "team-orders"}
+    group = GroupedByTableAlerts(
+        alerts=[
+            _make_test_alert("alert-1", "class-a", "fail", model_meta),
+            _make_test_alert("alert-2", "class-b", "error", model_meta),
+        ]
+    )
+
+    attributes = build_incident_payload(config=config, alert=group).data.attributes
+
+    token = get_alert_token(get_alert_class_id(group))
+    assert attributes.title == (
+        f"[Elementary] Multiple Issues: orders: 2 issues detected [{token}]"
+    )
+    assert attributes.fields["severity"]["value"] == "SEV-1"  # group status "error"
+    assert attributes.creation_idempotency_key.startswith("elementary-group-")
+    assert [h.handle for h in attributes.notification_handles] == ["@team-orders"]
+    summary = attributes.fields["summary"]["value"]
+    assert "**Alerts** (2):" in summary
+    for member in group.alerts:
+        assert f"- {member.summary} ({member.status})" in summary
+
+
+def test_alerts_group_identity_follows_its_alert_classes():
+    first_run = AlertsGroup(
+        alerts=[
+            _make_test_alert("alert-1", "class-a"),
+            _make_test_alert("alert-2", "class-b"),
+        ]
+    )
+    next_run_same_failures = AlertsGroup(
+        alerts=[
+            _make_test_alert("alert-4", "class-b"),
+            _make_test_alert("alert-3", "class-a"),
+        ]
+    )
+    next_run_new_failure = AlertsGroup(
+        alerts=[
+            _make_test_alert("alert-5", "class-a"),
+            _make_test_alert("alert-6", "class-c"),
+        ]
+    )
+
+    # Same failing alerts -> same dedup token, so the open incident is reused
+    assert get_alert_class_id(first_run) == get_alert_class_id(next_run_same_failures)
+    # A new failure -> new token, so it is not swallowed by the open incident
+    assert get_alert_class_id(first_run) != get_alert_class_id(next_run_new_failure)
+
+    config = DatadogConfig(api_key="k", application_key="a")
+    first_key = build_incident_payload(config=config, alert=first_run)
+    next_key = build_incident_payload(config=config, alert=next_run_same_failures)
+    # The idempotency key is per run (alert ids), like for single alerts
+    assert (
+        first_key.data.attributes.creation_idempotency_key
+        != next_key.data.attributes.creation_idempotency_key
+    )
+
+
+def test_alerts_group_of_failed_tests_uses_fail_severity():
+    group = AlertsGroup(alerts=[_make_test_alert("alert-1", "class-a", "fail")])
+    assert group.status == "failure"
+
+    default_config = DatadogConfig(api_key="k", application_key="a")
+    payload = build_incident_payload(config=default_config, alert=group)
+    assert payload.data.attributes.fields["severity"]["value"] == "SEV-2"
+
+    mapped_config = DatadogConfig(
+        api_key="k", application_key="a", severity_mapping={"fail": "SEV-4"}
+    )
+    payload = build_incident_payload(config=mapped_config, alert=group)
+    assert payload.data.attributes.fields["severity"]["value"] == "SEV-4"
+
+
+@mock.patch(f"{CLIENT_MODULE}.requests.request")
+def test_send_alert_creates_incident_for_alerts_group(mock_request, tmp_path):
+    integration = DatadogIntegration(
+        config=Config(
+            config_dir=str(tmp_path),
+            datadog_api_key="k",
+            datadog_application_key="a",
+        )
+    )
+    group = AlertsGroup(
+        alerts=[
+            _make_test_alert("alert-1", "class-a"),
+            _make_test_alert("alert-2", "class-b"),
+        ]
+    )
+    mock_request.side_effect = [
+        _make_response(200, {"data": {"attributes": {"incidents": []}}}),
+        _make_response(201, {"data": {"id": "incident-1"}}),
+    ]
+
+    assert integration.send_alert(group) is True
+
+    assert [c.kwargs["method"] for c in mock_request.call_args_list] == ["GET", "POST"]
+    title = mock_request.call_args_list[1].kwargs["json"]["data"]["attributes"]["title"]
+    assert title.endswith(f"[{get_alert_token(get_alert_class_id(group))}]")

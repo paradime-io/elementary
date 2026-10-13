@@ -91,6 +91,10 @@ class DatadogConfig(BaseModel):
     def get_severity_for_status(
         self, status: str, tags: Optional[List[str]] = None
     ) -> str:
+        # Alert groups report failed tests as "failure"; single alerts use "fail"
+        if status == "failure":
+            status = "fail"
+
         # Check tag-based severity rules first
         if self.tag_severity_rules and tags:
             for rule in self.tag_severity_rules:

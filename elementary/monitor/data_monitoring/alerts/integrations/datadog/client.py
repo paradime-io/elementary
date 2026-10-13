@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
 
+from elementary.monitor.alerts.alert import AlertModel
 from elementary.monitor.alerts.alert_messages.alert_fields import (
     AlertField as _AlertField,
 )
@@ -71,6 +72,27 @@ def get_alert_token(alert_class_id: str) -> str:
     """Return a stable, short token derived from alert_class_id, embedded in the incident title."""
     short_hash = hashlib.md5(alert_class_id.encode()).hexdigest()[:8]
     return f"edr-{short_hash}"
+
+
+def get_alert_class_id(alert: Union[AlertModel, BaseAlertsGroup]) -> str:
+    """Return the identity used to deduplicate an alert's incidents across runs.
+
+    Alert groups (grouped by table, or every alert once the group threshold is
+    hit) have no ``alert_class_id`` or ``id`` of their own, so a group is
+    identified by the alert classes it contains: the same set of failing alerts
+    keeps matching its open incident, while a new failure opens a new one.
+    """
+    if isinstance(alert, BaseAlertsGroup):
+        member_class_ids = sorted({member.alert_class_id for member in alert.alerts})
+        return "group:" + ",".join(member_class_ids)
+    return alert.alert_class_id or alert.id
+
+
+def get_alert_log_id(alert: Union[AlertModel, BaseAlertsGroup]) -> str:
+    """Return a short identifier for log lines; alert groups have no ``id``."""
+    if isinstance(alert, BaseAlertsGroup):
+        return f"group of {len(alert.alerts)} alerts"
+    return alert.id
 
 
 class DatadogApiClient:
@@ -225,8 +247,7 @@ def build_incident_payload(
     """Build a Datadog incident payload from an Elementary alert"""
 
     # Generate title with embedded deduplication token
-    alert_class_id = getattr(alert, "alert_class_id", alert.id)
-    token = get_alert_token(alert_class_id)
+    token = get_alert_token(get_alert_class_id(alert))
 
     # Per-alert overrides from dbt meta.alerts_config
     alert_meta = getattr(alert, "unified_meta", None) or {}
@@ -247,7 +268,13 @@ def build_incident_payload(
 
     # Per-run idempotency key: prevents duplicate creation within a single run
     # but allows re-creation after a previous incident is resolved.
-    idempotency_key = f"elementary-{alert.id}"
+    if isinstance(alert, BaseAlertsGroup):
+        member_ids = ",".join(sorted(member.id for member in alert.alerts))
+        idempotency_key = (
+            f"elementary-group-{hashlib.md5(member_ids.encode()).hexdigest()}"
+        )
+    else:
+        idempotency_key = f"elementary-{alert.id}"
 
     # Determine severity based on alert status and tags
     alert_tags = getattr(alert, "tags", None) or []
@@ -386,6 +413,14 @@ def _generate_incident_description(
         lines.append(f"**Detected**: {alert.detected_at_str}")
 
     lines.append("")
+
+    # Alerts in a group
+    if isinstance(alert, BaseAlertsGroup):
+        lines.append(f"**Alerts** ({len(alert.alerts)}):")  # noqa: E231
+        for member in alert.alerts:
+            member_status = f" ({member.status})" if member.status else ""
+            lines.append(f"- {member.summary}{member_status}")
+        lines.append("")
 
     # Error details
     error_msg = None

@@ -12,6 +12,8 @@ from elementary.monitor.data_monitoring.alerts.integrations.base_integration imp
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.client import (
     DatadogApiClient,
     build_incident_payload,
+    get_alert_class_id,
+    get_alert_log_id,
     get_alert_token,
 )
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
@@ -89,17 +91,17 @@ class DatadogIntegration(BaseIntegration):
         **kwargs,
     ) -> bool:
         """Send an alert as a Datadog incident, skipping if an open incident already exists."""
-        logger.debug(f"Creating Datadog incident for alert: {alert.id}")
+        alert_log_id = get_alert_log_id(alert)
+        logger.debug(f"Creating Datadog incident for alert: {alert_log_id}")
 
         try:
-            alert_class_id = getattr(alert, "alert_class_id", alert.id)
-            token = get_alert_token(alert_class_id)
+            token = get_alert_token(get_alert_class_id(alert))
 
             open_incident_id = self.client.search_open_incidents(token)
             if open_incident_id:
                 logger.info(
                     f"Datadog: open incident {open_incident_id} already exists for "
-                    f"{alert_class_id} — skipping creation."
+                    f"{alert_log_id} ({token}) — skipping creation."
                 )
                 return True
 
@@ -113,15 +115,19 @@ class DatadogIntegration(BaseIntegration):
                     else "unknown"
                 )
                 logger.info(
-                    f"Successfully created Datadog incident {incident_id} for alert {alert.id}"
+                    f"Successfully created Datadog incident {incident_id} for alert {alert_log_id}"
                 )
                 return True
             else:
-                logger.error(f"Failed to create Datadog incident for alert {alert.id}")
+                logger.error(
+                    f"Failed to create Datadog incident for alert {alert_log_id}"
+                )
                 return False
 
         except Exception as e:
-            logger.error(f"Error creating Datadog incident for alert {alert.id}: {e}")
+            logger.error(
+                f"Error creating Datadog incident for alert {alert_log_id}: {e}"
+            )
             return False
 
     def send_test_message(self, *args, **kwargs) -> bool:
