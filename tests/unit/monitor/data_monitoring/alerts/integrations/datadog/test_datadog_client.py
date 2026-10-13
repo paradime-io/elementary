@@ -404,3 +404,31 @@ def test_send_alert_creates_incident_for_alerts_group(mock_request, tmp_path):
     assert [c.kwargs["method"] for c in mock_request.call_args_list] == ["GET", "POST"]
     title = mock_request.call_args_list[1].kwargs["json"]["data"]["attributes"]["title"]
     assert title.endswith(f"[{get_alert_token(get_alert_class_id(group))}]")
+
+
+@mock.patch(f"{CLIENT_MODULE}.requests.request")
+def test_send_test_message_creates_incident(mock_request, tmp_path):
+    integration = DatadogIntegration(
+        config=Config(
+            config_dir=str(tmp_path),
+            datadog_api_key="k",
+            datadog_application_key="a",
+        )
+    )
+    mock_request.side_effect = [
+        _make_response(200, {"data": {"attributes": {"incidents": []}}}),
+        _make_response(201, {"data": {"id": "incident-1"}}),
+    ]
+
+    assert integration.send_test_message() is True
+
+    attributes = mock_request.call_args_list[1].kwargs["json"]["data"]["attributes"]
+    assert attributes["title"] == (
+        '[Elementary] Integration Test: "datadog_integration_test" test failed on '
+        f"elementary.test_table [{get_alert_token('test-elementary-datadog')}]"
+    )
+    assert attributes["fields"]["severity"]["value"] == "SEV-3"  # status "warn"
+    assert (
+        "This is a test message to verify the integration is working correctly."
+        in attributes["fields"]["summary"]["value"]
+    )

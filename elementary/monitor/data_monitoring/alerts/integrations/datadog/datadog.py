@@ -1,6 +1,8 @@
-from typing import Union
+from datetime import datetime, timezone
+from typing import Optional, Union
 
 from elementary.config.config import Config
+from elementary.monitor.alerts.alert import AlertModel
 from elementary.monitor.alerts.alerts_groups import GroupedByTableAlerts
 from elementary.monitor.alerts.alerts_groups.base_alerts_group import BaseAlertsGroup
 from elementary.monitor.alerts.model_alert import ModelAlertModel
@@ -30,7 +32,7 @@ class DatadogIntegration(BaseIntegration):
     def __init__(
         self,
         config: Config,
-        tracking: Tracking = None,
+        tracking: Optional[Tracking] = None,
         *args,
         **kwargs,
     ) -> None:
@@ -80,13 +82,7 @@ class DatadogIntegration(BaseIntegration):
 
     def send_alert(
         self,
-        alert: Union[
-            TestAlertModel,
-            ModelAlertModel,
-            SourceFreshnessAlertModel,
-            GroupedByTableAlerts,
-            BaseAlertsGroup,
-        ],
+        alert: Union[AlertModel, GroupedByTableAlerts, BaseAlertsGroup],
         *args,
         **kwargs,
     ) -> bool:
@@ -132,39 +128,26 @@ class DatadogIntegration(BaseIntegration):
 
     def send_test_message(self, *args, **kwargs) -> bool:
         """Send a test incident to verify Datadog integration"""
-        from datetime import datetime, timezone
-
-        # Create a mock test alert for testing
-        test_alert_data = {
-            "id": "test-alert-123",
-            "alert_class_id": "test-elementary-datadog",
-            "test_name": "datadog_integration_test",
-            "test_type": "integration_test",
-            "status": "warn",
-            "summary": "Datadog integration test message",
-            "table_full_name": "elementary.test_table",
-            "detected_at": datetime.now(tz=timezone.utc),
-            "error_message": "This is a test message to verify Datadog integration is working correctly.",
-            "tags": ["test", "integration"],
-            "owners": ["elementary-team"],
-        }
-
-        # This is a simplified mock - in practice you'd create a proper TestAlertModel
-        # For now, we'll create a basic object with the required attributes
-        class MockTestAlert:
-            def __init__(self, data):
-                for key, value in data.items():
-                    setattr(self, key, value)
-                self.detected_at_str = self.detected_at.strftime(
-                    "%Y-%m-%d %H:%M:%S UTC"
-                )
-                self.is_elementary_test = True
-
-            def get_report_link(self):
-                return None
-
-        mock_alert = MockTestAlert(test_alert_data)
-        return self.send_alert(mock_alert)
+        test_alert = TestAlertModel(
+            id="test-alert-123",
+            test_unique_id="test.elementary.datadog_integration_test",
+            elementary_unique_id="test.elementary.datadog_integration_test",
+            test_name="datadog_integration_test",
+            severity="WARN",
+            test_type="integration_test",
+            test_sub_type="generic",
+            test_short_name="datadog_integration_test",
+            alert_class_id="test-elementary-datadog",
+            # TestAlertModel capitalizes this text, so it avoids proper nouns
+            test_results_description="This is a test message to verify the integration is working correctly.",
+            schema_name="elementary",
+            table_name="test_table",
+            detected_at=datetime.now(tz=timezone.utc),
+            status="warn",
+            tags=["test", "integration"],
+            owners=["elementary-team"],
+        )
+        return self.send_alert(test_alert)
 
     # Abstract method implementations (required by BaseIntegration)
     def _get_dbt_test_template(self, alert: TestAlertModel, *args, **kwargs):
@@ -201,12 +184,7 @@ class DatadogIntegration(BaseIntegration):
 
     def _get_fallback_template(
         self,
-        alert: Union[
-            TestAlertModel,
-            ModelAlertModel,
-            SourceFreshnessAlertModel,
-            GroupedByTableAlerts,
-        ],
+        alert: Union[AlertModel, GroupedByTableAlerts],
         *args,
         **kwargs,
     ):

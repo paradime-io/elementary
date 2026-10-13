@@ -236,13 +236,7 @@ class DatadogApiClient:
 
 def build_incident_payload(
     config: DatadogConfig,
-    alert: Union[
-        TestAlertModel,
-        ModelAlertModel,
-        SourceFreshnessAlertModel,
-        GroupedByTableAlerts,
-        BaseAlertsGroup,
-    ],
+    alert: Union[AlertModel, GroupedByTableAlerts, BaseAlertsGroup],
 ) -> CreateIncidentInput:
     """Build a Datadog incident payload from an Elementary alert"""
 
@@ -357,13 +351,7 @@ def build_incident_payload(
 
 
 def _generate_incident_title(
-    alert: Union[
-        TestAlertModel,
-        ModelAlertModel,
-        SourceFreshnessAlertModel,
-        GroupedByTableAlerts,
-        BaseAlertsGroup,
-    ]
+    alert: Union[AlertModel, GroupedByTableAlerts, BaseAlertsGroup]
 ) -> str:
     """Generate a descriptive incident title from an alert"""
     if isinstance(alert, TestAlertModel):
@@ -385,13 +373,7 @@ def _generate_incident_title(
 
 
 def _generate_incident_description(
-    alert: Union[
-        TestAlertModel,
-        ModelAlertModel,
-        SourceFreshnessAlertModel,
-        GroupedByTableAlerts,
-        BaseAlertsGroup,
-    ]
+    alert: Union[AlertModel, GroupedByTableAlerts, BaseAlertsGroup]
 ) -> str:
     """Generate a comprehensive incident description from an alert"""
 
