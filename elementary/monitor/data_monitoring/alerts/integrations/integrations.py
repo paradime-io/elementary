@@ -18,6 +18,9 @@ from elementary.messages.messaging_integrations.teams_webhook import (
 from elementary.monitor.data_monitoring.alerts.integrations.base_integration import (
     BaseIntegration,
 )
+from elementary.monitor.data_monitoring.alerts.integrations.datadog.datadog import (
+    DatadogIntegration,
+)
 from elementary.monitor.data_monitoring.alerts.integrations.slack.slack import (
     SlackIntegration,
 )
@@ -62,6 +65,11 @@ class Integrations:
                 raise UnsupportedAlertIntegrationError
         elif config.has_teams:
             return TeamsWebhookMessagingIntegration(config.teams_webhook)
+        elif config.has_datadog:
+            return DatadogIntegration(
+                config=config,
+                tracking=tracking,
+            )
         else:
             raise UnsupportedAlertIntegrationError
 
