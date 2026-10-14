@@ -3,6 +3,7 @@ import click
 from elementary.config.config import Config
 from elementary.operations.upload_source_freshness import UploadSourceFreshnessOperation
 from elementary.tracking.anonymous_tracking import AnonymousCommandLineTracking
+from elementary.utils.cli_utils import dbt_vars_option
 
 _MODULE_NAME = "run-operation"
 
@@ -37,7 +38,7 @@ def run_operation():
     type=click.Path(exists=True),
     default=None,
     help="Which directory to look in for the profiles.yml file. "
-    "If not set, edr will look in the current working directory first, then HOME/.dbt/",
+    "If not set, edr will look in HOME/.dbt/",
 )
 @click.option(
     "--target-path",
@@ -51,6 +52,7 @@ def run_operation():
     default=25,
     help="Amount of rows to insert per insert statement.",
 )
+@dbt_vars_option
 @click.pass_context
 def upload_source_freshness(ctx, rows_per_insert: int, **conf):
     """

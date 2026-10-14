@@ -52,7 +52,7 @@
         select * from {{ ref('elementary', 'dbt_models') }}
     ),
 
-    snapshots as (
+    snapshots_data as (
         select * from {{ ref('elementary', 'dbt_snapshots') }}
     ),
 
@@ -71,7 +71,7 @@
     artifacts_meta as (
         select unique_id, meta from models
         union all
-        select unique_id, meta from snapshots
+        select unique_id, meta from snapshots_data
         union all
         select unique_id, meta from seeds
     ),
@@ -120,7 +120,7 @@
     all_alerts as ( 
         select *
         from all_run_results
-        where lower(all_run_results.status) != 'success'
+        where lower(all_run_results.status) not in ('success', 'reused')
         and {{ elementary.edr_cast_as_timestamp('all_run_results.generated_at') }} > {{ elementary.edr_timeadd('day', -1 * days_back, elementary.edr_current_timestamp()) }}
     )
 

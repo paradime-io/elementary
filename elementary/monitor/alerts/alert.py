@@ -58,7 +58,11 @@ class AlertModel:
         self.detected_at = None
         if detected_at is not None:
             try:
-                self.detected_at_utc = detected_at
+                # detected_at is stored in UTC, so a naive datetime must be
+                # interpreted as UTC rather than as the machine's local time.
+                if detected_at.tzinfo is None:
+                    detected_at = detected_at.replace(tzinfo=tz.tzutc())
+                self.detected_at_utc = detected_at.astimezone(tz.tzutc())
                 self.detected_at = detected_at.astimezone(
                     tz.gettz(timezone) if timezone else tz.tzlocal()
                 )
@@ -99,8 +103,12 @@ class AlertModel:
         raise NotImplementedError
 
     @property
-    def concise_name(self):
-        return "Alert"
+    def concise_name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def asset_type(self) -> str:
+        raise NotImplementedError
 
     @property
     def summary(self) -> str:

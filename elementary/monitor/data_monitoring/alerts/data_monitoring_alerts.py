@@ -22,6 +22,7 @@ from elementary.messages.messaging_integrations.base_messaging_integration impor
 from elementary.messages.messaging_integrations.exceptions import (
     MessagingIntegrationError,
 )
+from elementary.monitor.alerts.alert import AlertModel
 from elementary.monitor.alerts.alert_messages.builder import (
     AlertMessageBuilder,
     MessageBuilderConfig,
@@ -143,20 +144,11 @@ class DataMonitoringAlerts(DataMonitoring):
             tracking=self.tracking,
         )
 
-    def _populate_data(
-        self,
-        days_back: Optional[int] = None,
-        dbt_full_refresh: bool = False,
-        dbt_vars: Optional[dict] = None,
-    ) -> bool:
+    def _populate_data(self, dbt_full_refresh: bool = False) -> bool:
         logger.info("Running internal dbt run to populate alerts")
-        vars = dbt_vars or dict()
-        if days_back:
-            vars.update(days_back=days_back)
         success = self.internal_dbt_runner.run(
             select="elementary_cli.alerts.alerts_v2",
             full_refresh=dbt_full_refresh,
-            vars=vars,
         )
         self.execution_properties["alerts_populate_success"] = success
         if not success:
@@ -387,13 +379,7 @@ class DataMonitoringAlerts(DataMonitoring):
             self.execution_properties["sent_alert_count"] = self.sent_alert_count
             return
 
-        sent_successfully_alerts: List[
-            Union[
-                TestAlertModel,
-                ModelAlertModel,
-                SourceFreshnessAlertModel,
-            ]
-        ] = []
+        sent_successfully_alerts: List[AlertModel] = []
 
         with alive_bar(len(alerts), title="Sending alerts") as bar:
             for alert in alerts:
@@ -434,14 +420,11 @@ class DataMonitoringAlerts(DataMonitoring):
         self,
         days_back: int,
         dbt_full_refresh: bool = False,
-        dbt_vars: Optional[dict] = None,
     ) -> bool:
         # Populate data
         if self.should_populate_data:
             popopulated_data_successfully = self._populate_data(
-                days_back=days_back,
                 dbt_full_refresh=dbt_full_refresh,
-                dbt_vars=dbt_vars,
             )
             if not popopulated_data_successfully:
                 self.success = False

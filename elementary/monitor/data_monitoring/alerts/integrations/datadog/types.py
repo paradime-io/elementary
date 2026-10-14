@@ -53,7 +53,9 @@ class DatadogIncidentFieldAttributes(BaseModel):
     title: str
     customer_impact_scope: Optional[str] = Field(default=None)
     customer_impacted: bool = Field(default=False)
-    notification_handles: Optional[List[DatadogNotificationHandle]] = Field(default=None)
+    notification_handles: Optional[List[DatadogNotificationHandle]] = Field(
+        default=None
+    )
     fields: Dict[str, Any]
     creation_idempotency_key: str
     incident_type_uuid: Optional[str] = Field(default=None)
@@ -77,25 +79,33 @@ class DatadogConfig(BaseModel):
     api_key: str
     application_key: str
     site: DatadogSite = Field(default=DatadogSite.US1)
-    default_severity: DatadogIncidentSeverity = Field(default=DatadogIncidentSeverity.SEV3)
+    default_severity: DatadogIncidentSeverity = Field(
+        default=DatadogIncidentSeverity.SEV3
+    )
     severity_mapping: Optional[Dict[str, str]] = Field(default=None)
     customer_impacted: bool = Field(default=False)
     commander_user_id: Optional[str] = Field(default=None)
     notification_handles: Optional[List[str]] = Field(default=None)
     tag_severity_rules: Optional[List[Dict[str, Any]]] = Field(default=None)
 
-    def get_severity_for_status(self, status: str, tags: Optional[List[str]] = None) -> str:
+    def get_severity_for_status(
+        self, status: str, tags: Optional[List[str]] = None
+    ) -> str:
+        # Alert groups report failed tests as "failure"; single alerts use "fail"
+        if status == "failure":
+            status = "fail"
+
         # Check tag-based severity rules first
         if self.tag_severity_rules and tags:
             for rule in self.tag_severity_rules:
                 rule_tags = rule.get("tags", [])
                 if any(tag in tags for tag in rule_tags):
                     return rule.get("severity", self.default_severity.value)
-        
+
         # Use status-based mapping
         if self.severity_mapping:
             return self.severity_mapping.get(status, self.default_severity.value)
-        
+
         # Default mapping
         default_mapping = {
             "error": DatadogIncidentSeverity.SEV1.value,

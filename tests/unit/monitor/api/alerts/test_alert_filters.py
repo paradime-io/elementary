@@ -901,6 +901,57 @@ def test_filter_alerts():
     assert len(filter_model_alerts) == 0
 
 
+def _alert_with_status(alert_id: str, status: str) -> PendingAlertSchema:
+    return PendingAlertSchema(
+        id=alert_id,
+        alert_class_id=alert_id,
+        type=AlertTypes.TEST,
+        detected_at=datetime(2022, 10, 10, 10, 0, 0),
+        created_at=datetime(2022, 10, 10, 10, 0, 0),
+        updated_at=datetime(2022, 10, 10, 10, 0, 0),
+        status=AlertStatus.PENDING,
+        data=TestAlertDataSchema(
+            id=alert_id,
+            alert_class_id=alert_id,
+            model_unique_id="elementary.model_id_1",
+            test_unique_id=alert_id,
+            test_name=alert_id,
+            tags=[],
+            model_meta=dict(owner='["jeff"]'),
+            status=status,
+            elementary_unique_id=f"elementary.model_id_1.{alert_id}.9cf2f5f6ad.None.generic",
+            detected_at=datetime(2022, 10, 10, 10, 0, 0),
+            database_name="test_db",
+            schema_name="test_schema",
+            table_name="table",
+            test_type="dbt_test",
+            test_sub_type="generic",
+            test_results_description="a mock alert",
+            test_results_query="select * from table",
+            test_short_name=alert_id,
+            severity="ERROR",
+            resource_type=ResourceType.TEST,
+        ),
+    )
+
+
+def test_filter_alerts_skips_unknown_status():
+    # 'none' is not a member of the Status enum. The filter must not crash
+    # on it (was raising ValueError) and must drop the alert instead of
+    # letting it bypass the status filter.
+    bad_alert = _alert_with_status("bad_status_alert", "none")
+    good_alert = _alert_with_status("good_alert", "fail")
+
+    # Default filter (FAIL/ERROR/RUNTIME_ERROR/WARN): bad alert dropped, good alert kept.
+    filtered = filter_alerts([bad_alert, good_alert], FiltersSchema())
+    assert [alert.id for alert in filtered] == ["good_alert"]
+
+    # Empty status filter (no status constraint): bad alert still dropped because
+    # we can't classify it; good alert passes.
+    filtered = filter_alerts([bad_alert, good_alert], FiltersSchema(statuses=[]))
+    assert [alert.id for alert in filtered] == ["good_alert"]
+
+
 def test_multi_filters():
     test_alerts, _, _ = initial_alerts()
 
@@ -953,3 +1004,49 @@ def test_multi_filters():
         "test_alert_1",
         "test_alert_2",
     ]
+
+
+def test_reused_status_does_not_crash_filter_alerts():
+    """Regression test for dbt State 'reused' status crashing filter_alerts.
+
+    dbt State (v1.11+) introduces a 'reused' run status for models skipped
+    because their state hasn't changed. When such an alert reached
+    filter_alerts the call to Status('reused') raised ValueError because
+    'reused' was not a member of the Status enum.
+    """
+    reused_alert = PendingAlertSchema(
+        id="reused_model_alert",
+        alert_class_id="elementary.model_id_reused",
+        type=AlertTypes.MODEL,
+        detected_at=datetime(2022, 10, 10, 10, 0, 0),
+        created_at=datetime(2022, 10, 10, 10, 0, 0),
+        updated_at=datetime(2022, 10, 10, 10, 0, 0),
+        status=AlertStatus.PENDING,
+        data=ModelAlertDataSchema(
+            id="reused_1",
+            alert_class_id="elementary.model_id_reused",
+            model_unique_id="elementary.model_id_reused",
+            alias="reused_model",
+            path="my/path",
+            original_path="",
+            materialization="table",
+            message="",
+            full_refresh=False,
+            detected_at=datetime(2022, 10, 10, 10, 0, 0),
+            tags=[],
+            model_meta={},
+            status="reused",
+            database_name="test_db",
+            schema_name="test_schema",
+            resource_type=ResourceType.MODEL,
+        ),
+    )
+
+    # Must not raise ValueError("'reused' is not a valid Status").
+    # The alert is correctly filtered out by the default status filter (which
+    # only surfaces FAIL / ERROR / RUNTIME_ERROR / WARN).
+    result = filter_alerts([reused_alert], FiltersSchema())
+    assert len(result) == 0
+
+    # Status enum must include REUSED
+    assert Status("reused") is Status.REUSED

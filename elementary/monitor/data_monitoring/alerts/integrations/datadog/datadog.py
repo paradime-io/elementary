@@ -1,8 +1,9 @@
-import json
-from typing import Any, Dict, Union
+from datetime import datetime, timezone
+from typing import Optional, Union
 
 from elementary.config.config import Config
-from elementary.monitor.alerts.alerts_groups import AlertsGroup, GroupedByTableAlerts
+from elementary.monitor.alerts.alert import AlertModel
+from elementary.monitor.alerts.alerts_groups import GroupedByTableAlerts
 from elementary.monitor.alerts.alerts_groups.base_alerts_group import BaseAlertsGroup
 from elementary.monitor.alerts.model_alert import ModelAlertModel
 from elementary.monitor.alerts.source_freshness_alert import SourceFreshnessAlertModel
@@ -13,6 +14,8 @@ from elementary.monitor.data_monitoring.alerts.integrations.base_integration imp
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.client import (
     DatadogApiClient,
     build_incident_payload,
+    get_alert_class_id,
+    get_alert_log_id,
     get_alert_token,
 )
 from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
@@ -29,7 +32,7 @@ class DatadogIntegration(BaseIntegration):
     def __init__(
         self,
         config: Config,
-        tracking: Tracking = None,
+        tracking: Optional[Tracking] = None,
         *args,
         **kwargs,
     ) -> None:
@@ -44,53 +47,57 @@ class DatadogIntegration(BaseIntegration):
     def _initial_client(self, *args, **kwargs) -> DatadogApiClient:
         if not self.config.datadog_api_key or not self.config.datadog_application_key:
             raise Exception("Datadog API key and application key are required")
-        
+
         return DatadogApiClient(
             api_key=self.config.datadog_api_key,
             application_key=self.config.datadog_application_key,
-            site=DatadogSite(self.config.datadog_site) if self.config.datadog_site else DatadogSite.US1,
+            site=DatadogSite(self.config.datadog_site)
+            if self.config.datadog_site
+            else DatadogSite.US1,
         )
 
     def _build_datadog_config(self) -> DatadogConfig:
         """Build Datadog configuration from Elementary config"""
-        from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import DatadogIncidentSeverity
-        
+        from elementary.monitor.data_monitoring.alerts.integrations.datadog.types import (
+            DatadogIncidentSeverity,
+        )
+
         return DatadogConfig(
             api_key=self.config.datadog_api_key or "",
             application_key=self.config.datadog_application_key or "",
-            site=DatadogSite(self.config.datadog_site) if self.config.datadog_site else DatadogSite.US1,
-            default_severity=getattr(self.config, 'datadog_default_severity', None) or DatadogIncidentSeverity.SEV3,
-            severity_mapping=getattr(self.config, 'datadog_severity_mapping', None),
-            customer_impacted=getattr(self.config, 'datadog_customer_impacted', None) or False,
-            commander_user_id=getattr(self.config, 'datadog_commander_user_id', None),
-            notification_handles=getattr(self.config, 'datadog_notification_handles', None),
-            tag_severity_rules=getattr(self.config, 'datadog_tag_severity_rules', None),
+            site=DatadogSite(self.config.datadog_site)
+            if self.config.datadog_site
+            else DatadogSite.US1,
+            default_severity=getattr(self.config, "datadog_default_severity", None)
+            or DatadogIncidentSeverity.SEV3,
+            severity_mapping=getattr(self.config, "datadog_severity_mapping", None),
+            customer_impacted=getattr(self.config, "datadog_customer_impacted", None)
+            or False,
+            commander_user_id=getattr(self.config, "datadog_commander_user_id", None),
+            notification_handles=getattr(
+                self.config, "datadog_notification_handles", None
+            ),
+            tag_severity_rules=getattr(self.config, "datadog_tag_severity_rules", None),
         )
 
     def send_alert(
         self,
-        alert: Union[
-            TestAlertModel,
-            ModelAlertModel,
-            SourceFreshnessAlertModel,
-            GroupedByTableAlerts,
-            BaseAlertsGroup,
-        ],
+        alert: Union[AlertModel, GroupedByTableAlerts, BaseAlertsGroup],
         *args,
         **kwargs,
     ) -> bool:
         """Send an alert as a Datadog incident, skipping if an open incident already exists."""
-        logger.debug(f"Creating Datadog incident for alert: {alert.id}")
+        alert_log_id = get_alert_log_id(alert)
+        logger.debug(f"Creating Datadog incident for alert: {alert_log_id}")
 
         try:
-            alert_class_id = getattr(alert, "alert_class_id", alert.id)
-            token = get_alert_token(alert_class_id)
+            token = get_alert_token(get_alert_class_id(alert))
 
             open_incident_id = self.client.search_open_incidents(token)
             if open_incident_id:
                 logger.info(
                     f"Datadog: open incident {open_incident_id} already exists for "
-                    f"{alert_class_id} — skipping creation."
+                    f"{alert_log_id} ({token}) — skipping creation."
                 )
                 return True
 
@@ -98,51 +105,49 @@ class DatadogIntegration(BaseIntegration):
             success, response_data = self.client.create_incident(payload)
 
             if success:
-                incident_id = response_data.get("data", {}).get("id") if response_data else "unknown"
-                logger.info(f"Successfully created Datadog incident {incident_id} for alert {alert.id}")
+                incident_id = (
+                    response_data.get("data", {}).get("id")
+                    if response_data
+                    else "unknown"
+                )
+                logger.info(
+                    f"Successfully created Datadog incident {incident_id} for alert {alert_log_id}"
+                )
                 return True
             else:
-                logger.error(f"Failed to create Datadog incident for alert {alert.id}")
+                logger.error(
+                    f"Failed to create Datadog incident for alert {alert_log_id}"
+                )
                 return False
 
         except Exception as e:
-            logger.error(f"Error creating Datadog incident for alert {alert.id}: {e}")
+            logger.error(
+                f"Error creating Datadog incident for alert {alert_log_id}: {e}"
+            )
             return False
 
     def send_test_message(self, *args, **kwargs) -> bool:
         """Send a test incident to verify Datadog integration"""
-        from elementary.monitor.alerts.test_alert import TestAlertModel
-        from datetime import datetime, timezone
-        
-        # Create a mock test alert for testing
-        test_alert_data = {
-            "id": "test-alert-123",
-            "alert_class_id": "test-elementary-datadog",
-            "test_name": "datadog_integration_test",
-            "test_type": "integration_test",
-            "status": "warn",
-            "summary": "Datadog integration test message",
-            "table_full_name": "elementary.test_table",
-            "detected_at": datetime.now(tz=timezone.utc),
-            "error_message": "This is a test message to verify Datadog integration is working correctly.",
-            "tags": ["test", "integration"],
-            "owners": ["elementary-team"],
-        }
-        
-        # This is a simplified mock - in practice you'd create a proper TestAlertModel
-        # For now, we'll create a basic object with the required attributes
-        class MockTestAlert:
-            def __init__(self, data):
-                for key, value in data.items():
-                    setattr(self, key, value)
-                self.detected_at_str = self.detected_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-                self.is_elementary_test = True
-            
-            def get_report_link(self):
-                return None
-                
-        mock_alert = MockTestAlert(test_alert_data)
-        return self.send_alert(mock_alert)
+        test_alert = TestAlertModel(
+            id="test-alert-123",
+            test_unique_id="test.elementary.datadog_integration_test",
+            elementary_unique_id="test.elementary.datadog_integration_test",
+            test_name="datadog_integration_test",
+            severity="WARN",
+            test_type="integration_test",
+            test_sub_type="generic",
+            test_short_name="datadog_integration_test",
+            alert_class_id="test-elementary-datadog",
+            # TestAlertModel capitalizes this text, so it avoids proper nouns
+            test_results_description="This is a test message to verify the integration is working correctly.",
+            schema_name="elementary",
+            table_name="test_table",
+            detected_at=datetime.now(tz=timezone.utc),
+            status="warn",
+            tags=["test", "integration"],
+            owners=["elementary-team"],
+        )
+        return self.send_alert(test_alert)
 
     # Abstract method implementations (required by BaseIntegration)
     def _get_dbt_test_template(self, alert: TestAlertModel, *args, **kwargs):
@@ -161,11 +166,15 @@ class DatadogIntegration(BaseIntegration):
         # Not used for Datadog integration - incidents are created directly
         return None
 
-    def _get_source_freshness_template(self, alert: SourceFreshnessAlertModel, *args, **kwargs):
+    def _get_source_freshness_template(
+        self, alert: SourceFreshnessAlertModel, *args, **kwargs
+    ):
         # Not used for Datadog integration - incidents are created directly
         return None
 
-    def _get_group_by_table_template(self, alert: GroupedByTableAlerts, *args, **kwargs):
+    def _get_group_by_table_template(
+        self, alert: GroupedByTableAlerts, *args, **kwargs
+    ):
         # Not used for Datadog integration - incidents are created directly
         return None
 
@@ -175,12 +184,7 @@ class DatadogIntegration(BaseIntegration):
 
     def _get_fallback_template(
         self,
-        alert: Union[
-            TestAlertModel,
-            ModelAlertModel,
-            SourceFreshnessAlertModel,
-            GroupedByTableAlerts,
-        ],
+        alert: Union[AlertModel, GroupedByTableAlerts],
         *args,
         **kwargs,
     ):
